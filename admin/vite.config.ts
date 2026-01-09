@@ -3,6 +3,11 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  base: "/admin/",
+  build: {
+    outDir: "../infra/admin",
+    emptyOutDir: true,
+  },
   server: {
     port: 5174,
   },
