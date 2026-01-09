@@ -128,7 +128,7 @@ async def get_current_user(
 
     if not x_init_data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="init_data_required")
-    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
     parsed = _validate_init_data(x_init_data, bot_token)
