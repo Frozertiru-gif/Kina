@@ -13,9 +13,18 @@ Production-grade mono-repo skeleton for API, Telegram bot, uploader service, and
    ```bash
    cp .env.example .env
    ```
+   Ensure `DATABASE_URL` is set (required).
 2. Start services:
    ```bash
    docker compose up --build
+   ```
+3. Apply migrations:
+   ```bash
+   docker compose exec api alembic -c /api/alembic.ini upgrade head
+   ```
+4. Seed initial data:
+   ```bash
+   docker compose exec api python /api/scripts/seed.py
    ```
 
 ## Local URLs
