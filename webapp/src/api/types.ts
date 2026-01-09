@@ -45,3 +45,16 @@ export interface WatchResponse {
   title_id: number;
   episode_id: number | null;
 }
+
+export interface AuthResponse {
+  id: number;
+  tg_user_id: number;
+  username: string | null;
+  first_name: string | null;
+  premium_until: string | null;
+}
+
+export interface ReferralInfo {
+  code: string;
+  link: string;
+}

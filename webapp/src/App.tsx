@@ -62,6 +62,18 @@ export default function App() {
     telegram?.expand();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const startapp = params.get("startapp");
+    const refFromStartapp =
+      startapp && startapp.startsWith("ref_") ? startapp.replace("ref_", "") : null;
+    const ref = params.get("ref") || refFromStartapp;
+    if (ref) {
+      localStorage.setItem("kina_referral_code", ref);
+    }
+  }, []);
+
   return (
     <BrowserRouter>
       <UserDataProvider>

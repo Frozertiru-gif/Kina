@@ -64,6 +64,41 @@ type UploadJob = {
   last_error?: string | null;
 };
 
+type AdminUser = {
+  id: number;
+  tg_user_id: number;
+  username?: string | null;
+  first_name?: string | null;
+  premium_until?: string | null;
+  created_at?: string | null;
+};
+
+type ReferralItem = {
+  id: number;
+  referrer_user_id: number;
+  referrer_tg_user_id: number;
+  referrer_username?: string | null;
+  referred_user_id: number;
+  referred_tg_user_id: number;
+  referred_username?: string | null;
+  created_at?: string | null;
+};
+
+type ReferralRewardItem = {
+  id: number;
+  referrer_user_id: number;
+  referrer_tg_user_id: number;
+  referrer_username?: string | null;
+  referred_user_id: number;
+  referred_tg_user_id: number;
+  referred_username?: string | null;
+  reward_days: number;
+  reason: string;
+  applied: boolean;
+  applied_at?: string | null;
+  created_at?: string | null;
+};
+
 const tabs = [
   { id: "dashboard", label: "Dashboard" },
   { id: "titles", label: "Titles" },
@@ -71,6 +106,8 @@ const tabs = [
   { id: "jobs", label: "Upload Jobs" },
   { id: "audio", label: "Audio Tracks" },
   { id: "qualities", label: "Qualities" },
+  { id: "users", label: "Users" },
+  { id: "referrals", label: "Referrals" },
 ];
 
 async function apiFetch<T>(
@@ -238,6 +275,10 @@ export default function App() {
           {activeTab === "audio" && <AudioView api={api} onError={setError} />}
           {activeTab === "qualities" && (
             <QualityView api={api} onError={setError} />
+          )}
+          {activeTab === "users" && <UsersView api={api} onError={setError} />}
+          {activeTab === "referrals" && (
+            <ReferralsView api={api} onError={setError} />
           )}
         </main>
       </div>
@@ -1508,6 +1549,245 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
             </button>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function UsersView({ api, onError }: { api: any; onError: (msg: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (query) {
+        params.set("q", query);
+      }
+      params.set("limit", "50");
+      params.set("offset", "0");
+      const data = await api.get<{ items: AdminUser[] }>(
+        `/admin/users?${params.toString()}`,
+      );
+      setUsers(data.items);
+    } catch (err: any) {
+      onError(err.message ?? "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load().catch(() => null);
+  }, []);
+
+  const handleGrant = async (userId: number, days: number) => {
+    const reason = window.prompt("Причина", "manual_grant") || "manual_grant";
+    try {
+      await api.post(`/admin/users/${userId}/premium/grant`, { days, reason });
+      await load();
+    } catch (err: any) {
+      onError(err.message ?? "Failed to grant premium");
+    }
+  };
+
+  const handleCustomGrant = async (userId: number) => {
+    const rawDays = window.prompt("Сколько дней дать?", "7");
+    if (!rawDays) return;
+    const days = Number(rawDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      onError("Некорректное число дней");
+      return;
+    }
+    const reason = window.prompt("Причина", "manual_grant") || "manual_grant";
+    try {
+      await api.post(`/admin/users/${userId}/premium/grant`, { days, reason });
+      await load();
+    } catch (err: any) {
+      onError(err.message ?? "Failed to grant premium");
+    }
+  };
+
+  const handleRevoke = async (userId: number) => {
+    const reason = window.prompt("Причина", "manual_revoke") || "manual_revoke";
+    try {
+      await api.post(`/admin/users/${userId}/premium/revoke`, { reason });
+      await load();
+    } catch (err: any) {
+      onError(err.message ?? "Failed to revoke premium");
+    }
+  };
+
+  return (
+    <section>
+      <h2 style={{ marginTop: 0 }}>Users</h2>
+      <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search by TG ID or username"
+          style={{ padding: "0.5rem", minWidth: "280px" }}
+        />
+        <button type="button" onClick={() => load()}>
+          Search
+        </button>
+        {loading && <span style={{ color: "#6b7280" }}>Loading...</span>}
+      </div>
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f9fafb" }}>
+            <tr>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>User</th>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>Premium</th>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map((user) => {
+              const premiumActive = user.premium_until
+                ? new Date(user.premium_until) > new Date()
+                : false;
+              return (
+                <tr key={user.id} style={{ borderTop: "1px solid #f3f4f6" }}>
+                  <td style={{ padding: "0.75rem" }}>
+                    <div style={{ fontWeight: 600 }}>
+                      {user.username || user.first_name || "Unknown"}
+                    </div>
+                    <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
+                      TG ID: {user.tg_user_id}
+                    </div>
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>
+                    <div>{premiumActive ? "Active" : "Not active"}</div>
+                    {user.premium_until && (
+                      <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
+                        Until {new Date(user.premium_until).toLocaleString()}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>
+                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                      <button type="button" onClick={() => handleGrant(user.id, 7)}>
+                        Grant +7d
+                      </button>
+                      <button type="button" onClick={() => handleGrant(user.id, 30)}>
+                        Grant +30d
+                      </button>
+                      <button type="button" onClick={() => handleCustomGrant(user.id)}>
+                        Custom days
+                      </button>
+                      <button type="button" onClick={() => handleRevoke(user.id)}>
+                        Revoke
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function ReferralsView({ api, onError }: { api: any; onError: (msg: string) => void }) {
+  const [referrals, setReferrals] = useState<ReferralItem[]>([]);
+  const [rewards, setRewards] = useState<ReferralRewardItem[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [referralsData, rewardsData] = await Promise.all([
+        api.get<{ items: ReferralItem[] }>("/admin/referrals?limit=50&offset=0"),
+        api.get<{ items: ReferralRewardItem[] }>("/admin/referral_rewards?limit=50&offset=0"),
+      ]);
+      setReferrals(referralsData.items);
+      setRewards(rewardsData.items);
+    } catch (err: any) {
+      onError(err.message ?? "Failed to load referrals");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load().catch(() => null);
+  }, []);
+
+  return (
+    <section>
+      <h2 style={{ marginTop: 0 }}>Referrals</h2>
+      {loading && <div style={{ color: "#6b7280" }}>Loading...</div>}
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h3>Recent Referrals</h3>
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ background: "#f9fafb" }}>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referrer</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referred</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {referrals.map((ref) => (
+                <tr key={ref.id} style={{ borderTop: "1px solid #f3f4f6" }}>
+                  <td style={{ padding: "0.75rem" }}>
+                    {ref.referrer_username || "Unknown"} (TG {ref.referrer_tg_user_id})
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>
+                    {ref.referred_username || "Unknown"} (TG {ref.referred_tg_user_id})
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>
+                    {ref.created_at ? new Date(ref.created_at).toLocaleString() : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <h3>Referral Rewards</h3>
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead style={{ background: "#f9fafb" }}>
+              <tr>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referrer</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referred</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Days</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rewards.map((reward) => (
+                <tr key={reward.id} style={{ borderTop: "1px solid #f3f4f6" }}>
+                  <td style={{ padding: "0.75rem" }}>
+                    {reward.referrer_username || "Unknown"} (TG {reward.referrer_tg_user_id})
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>
+                    {reward.referred_username || "Unknown"} (TG {reward.referred_tg_user_id})
+                  </td>
+                  <td style={{ padding: "0.75rem" }}>{reward.reward_days}</td>
+                  <td style={{ padding: "0.75rem" }}>
+                    {reward.applied ? "Applied" : "Pending"}
+                    <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
+                      {reward.applied_at
+                        ? `Applied at ${new Date(reward.applied_at).toLocaleString()}`
+                        : reward.created_at
+                          ? `Created ${new Date(reward.created_at).toLocaleString()}`
+                          : ""}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   );

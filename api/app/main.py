@@ -11,6 +11,7 @@ from app.routes import (
     favorites,
     health,
     internal,
+    referral,
     subscriptions,
     titles,
     watch,
@@ -32,6 +33,7 @@ def create_app() -> FastAPI:
     api_router.include_router(watch.router)
     api_router.include_router(ads.router)
     api_router.include_router(subscriptions.router)
+    api_router.include_router(referral.router)
     api_router.include_router(internal.router)
     api_router.include_router(admin.router)
 

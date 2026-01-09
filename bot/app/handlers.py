@@ -2,8 +2,9 @@ import logging
 
 import httpx
 from aiogram import Bot, Router
+from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import keyboards
@@ -67,6 +68,59 @@ def build_router(
                 await query.answer("Premium скоро будет доступен.", show_alert=True)
             else:
                 await query.answer()
+
+    @router.message(CommandStart())
+    async def on_start(message: Message) -> None:
+        payload = ""
+        if message.text:
+            parts = message.text.split(maxsplit=1)
+            if len(parts) > 1:
+                payload = parts[1].strip()
+        referral_code = ""
+        if payload.startswith("ref_"):
+            referral_code = payload.replace("ref_", "", 1)
+        if referral_code:
+            response = await _post_service_json(
+                settings,
+                "/api/internal/referral/apply",
+                {
+                    "tg_user_id": message.from_user.id,
+                    "code": referral_code,
+                    "username": message.from_user.username,
+                    "first_name": message.from_user.first_name,
+                    "language_code": message.from_user.language_code,
+                },
+            )
+            if response and response.get("applied"):
+                await message.answer("Реферальный код применён. Спасибо!")
+            else:
+                await message.answer("Реферальный код не применён.")
+        else:
+            await message.answer("Добро пожаловать в Kina!")
+
+    @router.message(Command("ref"))
+    async def on_ref(message: Message) -> None:
+        response = await _post_service_json(
+            settings,
+            "/api/internal/referral/code",
+            {
+                "tg_user_id": message.from_user.id,
+                "username": message.from_user.username,
+                "first_name": message.from_user.first_name,
+                "language_code": message.from_user.language_code,
+            },
+        )
+        if not response:
+            await message.answer("Не удалось получить реферальный код.")
+            return
+        code = response.get("code")
+        link = response.get("link")
+        await message.answer(
+            "Ваш реферальный код:\n"
+            f"{code}\n\n"
+            "Поделитесь ссылкой:\n"
+            f"{link}"
+        )
 
     return router
 

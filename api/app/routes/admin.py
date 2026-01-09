@@ -1,16 +1,32 @@
 import json
+import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
-from sqlalchemy import func, select
+from pydantic import BaseModel, Field
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_admin_token, get_db_session
-from app.models import AudioTrack, Episode, MediaVariant, Quality, Season, Title, TitleType, UploadJob
+from app.models import (
+    AudioTrack,
+    Episode,
+    MediaVariant,
+    Quality,
+    Referral,
+    ReferralReward,
+    Season,
+    Title,
+    TitleType,
+    UploadJob,
+    User,
+    UserPremium,
+)
 from app.redis import get_redis
+from app.services.premium import apply_premium_days
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+logger = logging.getLogger("kina.api.admin")
 
 
 class TitleCreate(BaseModel):
@@ -104,6 +120,15 @@ class VariantUpdate(BaseModel):
     duration_sec: int | None = None
     size_bytes: int | None = None
     checksum_sha256: str | None = None
+
+
+class PremiumGrantRequest(BaseModel):
+    days: int = Field(..., ge=1)
+    reason: str
+
+
+class PremiumRevokeRequest(BaseModel):
+    reason: str
 
 
 def _expected_filename(title_id: int, episode_id: int | None, audio_id: int, quality_id: int) -> str:
@@ -622,3 +647,188 @@ async def rescan_upload_jobs(_: dict = Depends(get_admin_token)) -> dict:
     redis = get_redis()
     await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
     return {"queued": True}
+
+
+@router.get("/users")
+async def list_users(
+    q: str | None = Query(default=None, max_length=255),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    query = select(User, UserPremium.premium_until).outerjoin(
+        UserPremium, UserPremium.user_id == User.id
+    )
+    if q:
+        filters = [User.username.ilike(f"%{q}%")]
+        if q.isdigit():
+            filters.append(User.tg_user_id == int(q))
+        query = query.where(or_(*filters))
+    total_result = await session.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar_one()
+    result = await session.execute(query.order_by(User.id.desc()).limit(limit).offset(offset))
+    rows = result.all()
+    return {
+        "items": [
+            {
+                "id": user.id,
+                "tg_user_id": user.tg_user_id,
+                "username": user.username,
+                "first_name": user.first_name,
+                "premium_until": premium_until,
+                "created_at": user.created_at,
+            }
+            for user, premium_until in rows
+        ],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.post("/users/{user_id}/premium/grant")
+async def grant_premium(
+    user_id: int,
+    payload: PremiumGrantRequest,
+    _: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    premium_until = await apply_premium_days(
+        session,
+        user_id,
+        payload.days,
+        payload.reason,
+    )
+    logger.info(
+        "Admin premium grant: user_id=%s days=%s reason=%s",
+        user_id,
+        payload.days,
+        payload.reason,
+    )
+    return {"user_id": user_id, "premium_until": premium_until}
+
+
+@router.post("/users/{user_id}/premium/revoke")
+async def revoke_premium(
+    user_id: int,
+    payload: PremiumRevokeRequest,
+    _: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    now = datetime.now(timezone.utc)
+    premium = await session.get(UserPremium, user_id)
+    if premium:
+        premium.premium_until = now
+    else:
+        premium = UserPremium(user_id=user_id, premium_until=now)
+        session.add(premium)
+    await session.commit()
+    logger.info("Admin premium revoke: user_id=%s reason=%s", user_id, payload.reason)
+    return {"user_id": user_id, "premium_until": premium.premium_until}
+
+
+@router.get("/referrals")
+async def list_referrals(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    referrer_alias = User.__table__.alias("referrer")
+    referred_alias = User.__table__.alias("referred")
+    query = (
+        select(
+            Referral,
+            referrer_alias.c.tg_user_id.label("referrer_tg_user_id"),
+            referrer_alias.c.username.label("referrer_username"),
+            referred_alias.c.tg_user_id.label("referred_tg_user_id"),
+            referred_alias.c.username.label("referred_username"),
+        )
+        .join(referrer_alias, Referral.referrer_user_id == referrer_alias.c.id)
+        .join(referred_alias, Referral.referred_user_id == referred_alias.c.id)
+    )
+    total_result = await session.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar_one()
+    result = await session.execute(query.order_by(Referral.id.desc()).limit(limit).offset(offset))
+    rows = result.all()
+    items = []
+    for row in rows:
+        referral = row[0]
+        items.append(
+            {
+                "id": referral.id,
+                "referrer_user_id": referral.referrer_user_id,
+                "referrer_tg_user_id": row.referrer_tg_user_id,
+                "referrer_username": row.referrer_username,
+                "referred_user_id": referral.referred_user_id,
+                "referred_tg_user_id": row.referred_tg_user_id,
+                "referred_username": row.referred_username,
+                "created_at": referral.created_at,
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/referral_rewards")
+async def list_referral_rewards(
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    referrer_alias = User.__table__.alias("referrer")
+    referred_alias = User.__table__.alias("referred")
+    query = (
+        select(
+            ReferralReward,
+            referrer_alias.c.tg_user_id.label("referrer_tg_user_id"),
+            referrer_alias.c.username.label("referrer_username"),
+            referred_alias.c.tg_user_id.label("referred_tg_user_id"),
+            referred_alias.c.username.label("referred_username"),
+        )
+        .join(referrer_alias, ReferralReward.referrer_user_id == referrer_alias.c.id)
+        .join(referred_alias, ReferralReward.referred_user_id == referred_alias.c.id)
+    )
+    total_result = await session.execute(select(func.count()).select_from(query.subquery()))
+    total = total_result.scalar_one()
+    result = await session.execute(
+        query.order_by(ReferralReward.id.desc()).limit(limit).offset(offset)
+    )
+    rows = result.all()
+    items = []
+    for row in rows:
+        reward = row[0]
+        items.append(
+            {
+                "id": reward.id,
+                "referrer_user_id": reward.referrer_user_id,
+                "referrer_tg_user_id": row.referrer_tg_user_id,
+                "referrer_username": row.referrer_username,
+                "referred_user_id": reward.referred_user_id,
+                "referred_tg_user_id": row.referred_tg_user_id,
+                "referred_username": row.referred_username,
+                "reward_days": reward.reward_days,
+                "reason": reward.reason,
+                "applied": reward.applied,
+                "applied_at": reward.applied_at,
+                "created_at": reward.created_at,
+            }
+        )
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
