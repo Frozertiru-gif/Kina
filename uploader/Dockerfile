@@ -4,8 +4,8 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . /app
+COPY main.py /app/main.py
 
 ENV PYTHONUNBUFFERED=1
 
-ENTRYPOINT ["python", "-m", "uploader.main"]
+CMD ["python", "/app/main.py"]

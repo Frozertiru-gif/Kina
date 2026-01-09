@@ -1,33 +1,28 @@
 import asyncio
 import logging
+import os
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
 
-from bot.config import get_settings
-from bot.handlers import actions, start
-from bot.redis_store import close_redis
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("kina.bot")
+
+
+def get_bot_token() -> str:
+    token = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise SystemExit("BOT_TOKEN is required")
+    return token
 
 
 async def main() -> None:
-    settings = get_settings()
-    logging.basicConfig(level=settings.log_level)
-
-    bot = Bot(
-        token=settings.telegram_bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-        base_url=settings.telegram_api_base_url,
-        file_url=settings.telegram_file_api_base_url,
-    )
+    bot = Bot(token=get_bot_token())
     dispatcher = Dispatcher()
-    dispatcher.include_router(start.router)
-    dispatcher.include_router(actions.router)
+    logger.info("started")
 
     try:
         await dispatcher.start_polling(bot)
     finally:
-        await close_redis()
         await bot.session.close()
 
 
