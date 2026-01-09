@@ -1,21 +1,34 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from app.db.engine import init_db
+from app.routes import auth, catalog, favorites, health, internal, titles, watch
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kina.api")
 
-app = FastAPI(title="Kina API")
+
+def create_app() -> FastAPI:
+    app = FastAPI(title="Kina API")
+
+    api_router = APIRouter(prefix="/api")
+    api_router.include_router(health.router)
+    api_router.include_router(auth.router)
+    api_router.include_router(catalog.router)
+    api_router.include_router(titles.router)
+    api_router.include_router(favorites.router)
+    api_router.include_router(watch.router)
+    api_router.include_router(internal.router)
+
+    app.include_router(api_router)
+
+    @app.on_event("startup")
+    async def startup() -> None:
+        await init_db()
+        logger.info("started")
+
+    return app
 
 
-@app.on_event("startup")
-async def startup() -> None:
-    await init_db()
-    logger.info("started")
-
-
-@app.get("/api/health")
-async def health() -> dict[str, bool]:
-    return {"ok": True}
+app = create_app()
