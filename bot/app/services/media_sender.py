@@ -9,6 +9,7 @@ from app.db import (
     TitleInfo,
     VariantInfo,
     fetch_episode,
+    fetch_premium_until,
     fetch_title,
     fetch_variant,
 )
@@ -17,10 +18,32 @@ from app.services.message_state import demote_previous_message, mark_active_mess
 logger = logging.getLogger("kina.bot.media_sender")
 
 
-def build_card_text(title: TitleInfo, episode: EpisodeInfo | None) -> str:
+def build_card_text(
+    title: TitleInfo,
+    episode: EpisodeInfo | None,
+    variant: VariantInfo | None,
+    premium_until: str | None,
+    mode: str | None = None,
+) -> str:
     if episode:
-        return f"{title.name}\nS{episode.season_number}E{episode.episode_number}"
-    return title.name
+        episode_name = f" — {episode.name}" if episode.name else ""
+        header = f"{title.name}\nS{episode.season_number}E{episode.episode_number}{episode_name}"
+    else:
+        header = title.name
+
+    lines = [header]
+    if variant and variant.audio_name and variant.quality_name:
+        lines.append(f"{variant.audio_name} · {variant.quality_name}")
+    if premium_until:
+        premium_label = (
+            premium_until.strftime("%d.%m.%Y")
+            if hasattr(premium_until, "strftime")
+            else str(premium_until)
+        )
+        lines.append(f"Premium активен до {premium_label}")
+    if mode == "ad_gate":
+        lines.append("Требуется реклама")
+    return "\n".join(lines)
 
 
 async def send_watch_card(
@@ -37,10 +60,10 @@ async def send_watch_card(
         logger.warning("Title not found: %s", title_id)
         return
     episode = await fetch_episode(session, episode_id) if episode_id else None
+    variant = await fetch_variant(session, variant_id) if variant_id else None
+    premium_until = await fetch_premium_until(session, tg_user_id)
     await demote_previous_message(bot, session, tg_user_id)
-    text = build_card_text(title, episode)
-    if mode:
-        text = f"{text}\nРежим: {mode}"
+    text = build_card_text(title, episode, variant, premium_until, mode)
     keyboard = _build_keyboard(title, episode, variant_id)
     message = await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=keyboard)
     await mark_active_message(
@@ -69,8 +92,9 @@ async def send_video_by_variant(
         logger.warning("Title not found for variant: %s", variant_id)
         return
     episode = await fetch_episode(session, variant.episode_id) if variant.episode_id else None
+    premium_until = await fetch_premium_until(session, tg_user_id)
     await demote_previous_message(bot, session, tg_user_id)
-    if not variant.telegram_file_id:
+    if not variant.telegram_file_id or variant.status != "ready":
         message = await bot.send_message(
             chat_id=tg_user_id,
             text="Видео ещё загружается",
@@ -90,7 +114,7 @@ async def send_video_by_variant(
     message = await bot.send_video(
         chat_id=tg_user_id,
         video=variant.telegram_file_id,
-        caption=build_card_text(title, episode),
+        caption=build_card_text(title, episode, variant, premium_until),
         reply_markup=keyboard,
     )
     await mark_active_message(

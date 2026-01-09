@@ -17,8 +17,8 @@ from app.db import (
     fetch_quality_options,
     fetch_title,
     fetch_variant,
-    fetch_variant_by_selection,
     get_user_state,
+    update_user_preferences,
 )
 from app.services.media_sender import send_video_by_variant, send_watch_card
 from app.settings import Settings
@@ -59,7 +59,7 @@ def build_router(
             if data == "hide":
                 await _handle_hide(query, settings)
             elif data.startswith("reopen:"):
-                await _handle_reopen(query, session, data)
+                await _handle_reopen(query, session, settings, data)
             elif data.startswith("refresh:"):
                 await _handle_refresh(query, session, data)
             elif data.startswith("toggle_fav:"):
@@ -67,9 +67,9 @@ def build_router(
             elif data.startswith("toggle_sub:"):
                 await _handle_toggle_sub(query, settings, data)
             elif data.startswith("prev_ep:"):
-                await _handle_adjacent_episode(query, session, data, direction="prev")
+                await _handle_adjacent_episode(query, session, settings, data, direction="prev")
             elif data.startswith("next_ep:"):
-                await _handle_adjacent_episode(query, session, data, direction="next")
+                await _handle_adjacent_episode(query, session, settings, data, direction="next")
             elif data.startswith("aud_menu:"):
                 await _handle_audio_menu(query, session, data)
             elif data.startswith("q_menu:"):
@@ -184,18 +184,46 @@ async def _handle_hide(query: CallbackQuery, settings: Settings) -> None:
     await query.answer()
 
 
-async def _handle_reopen(query: CallbackQuery, session: AsyncSession, data: str) -> None:
+async def _handle_reopen(
+    query: CallbackQuery,
+    session: AsyncSession,
+    settings: Settings,
+    data: str,
+) -> None:
     parts = data.split(":")
     title_id = int(parts[1])
     episode_id = int(parts[2]) if len(parts) > 2 else None
-    variant = await fetch_default_variant(session, title_id, episode_id)
+    response = await _post_service_json(
+        settings,
+        "/api/internal/bot/watch/resolve",
+        {
+            "tg_user_id": query.from_user.id,
+            "title_id": title_id,
+            "episode_id": episode_id,
+            "audio_id": None,
+            "quality_id": None,
+        },
+    )
+    if not response:
+        variant = await fetch_default_variant(session, title_id, episode_id)
+        await send_watch_card(
+            query.bot,
+            session,
+            tg_user_id=query.from_user.id,
+            title_id=title_id,
+            episode_id=episode_id,
+            variant_id=variant.id if variant else None,
+            mode="reopen",
+        )
+        await query.answer()
+        return
     await send_watch_card(
         query.bot,
         session,
         tg_user_id=query.from_user.id,
         title_id=title_id,
         episode_id=episode_id,
-        variant_id=variant.id if variant else None,
+        variant_id=response.get("variant_id"),
         mode="reopen",
     )
     await query.answer()
@@ -230,6 +258,7 @@ async def _handle_toggle_sub(query: CallbackQuery, settings: Settings, data: str
 async def _handle_adjacent_episode(
     query: CallbackQuery,
     session: AsyncSession,
+    settings: Settings,
     data: str,
     direction: str,
 ) -> None:
@@ -237,28 +266,41 @@ async def _handle_adjacent_episode(
     title_id = int(parts[1])
     episode_id = int(parts[2])
     state = await get_user_state(session, query.from_user.id)
-    preferred_variant = None
-    if state.active_variant_id:
+    preferred_audio_id = state.preferred_audio_id
+    preferred_quality_id = state.preferred_quality_id
+    if (preferred_audio_id is None or preferred_quality_id is None) and state.active_variant_id:
         preferred_variant = await fetch_variant(session, state.active_variant_id)
+        if preferred_variant:
+            preferred_audio_id = preferred_audio_id or preferred_variant.audio_id
+            preferred_quality_id = preferred_quality_id or preferred_variant.quality_id
     next_episode = await fetch_adjacent_episode(session, episode_id, direction)
     if not next_episode:
-        await query.answer("Нет доступных серий.", show_alert=True)
+        await query.answer("Нет следующей серии", show_alert=True)
         return
-    variant = None
-    if preferred_variant:
-        variant = await fetch_variant_by_selection(
-            session,
-            title_id=title_id,
-            episode_id=next_episode.id,
-            audio_id=preferred_variant.audio_id,
-            quality_id=preferred_variant.quality_id,
-        )
-    if not variant:
-        variant = await fetch_default_variant(session, title_id, next_episode.id)
-    if not variant:
+    response = await _post_service_json(
+        settings,
+        "/api/internal/bot/watch/resolve",
+        {
+            "tg_user_id": query.from_user.id,
+            "title_id": title_id,
+            "episode_id": next_episode.id,
+            "audio_id": preferred_audio_id,
+            "quality_id": preferred_quality_id,
+        },
+    )
+    if not response:
         await query.answer("Нет доступного варианта.", show_alert=True)
         return
-    await send_video_by_variant(query.bot, session, query.from_user.id, variant.id)
+    await _handle_watch_request(
+        query.bot,
+        session,
+        settings,
+        query.from_user.id,
+        title_id,
+        next_episode.id,
+        response["audio_id"],
+        response["quality_id"],
+    )
     await query.answer()
 
 
@@ -267,7 +309,13 @@ async def _handle_audio_menu(query: CallbackQuery, session: AsyncSession, data: 
     title_id = int(parts[1])
     episode_id = int(parts[2]) if len(parts) > 2 else None
     audio_options = await fetch_audio_options(session, title_id, episode_id)
-    keyboard = keyboards.audio_menu_keyboard(title_id, episode_id, audio_options)
+    state = await get_user_state(session, query.from_user.id)
+    current_audio_id = state.preferred_audio_id
+    if current_audio_id is None and state.active_variant_id:
+        variant = await fetch_variant(session, state.active_variant_id)
+        if variant:
+            current_audio_id = variant.audio_id
+    keyboard = keyboards.audio_menu_keyboard(title_id, episode_id, audio_options, current_audio_id)
     await query.message.edit_reply_markup(reply_markup=keyboard)
     await query.answer()
 
@@ -277,7 +325,18 @@ async def _handle_quality_menu(query: CallbackQuery, session: AsyncSession, data
     title_id = int(parts[1])
     episode_id = int(parts[2]) if len(parts) > 2 else None
     quality_options = await fetch_quality_options(session, title_id, episode_id)
-    keyboard = keyboards.quality_menu_keyboard(title_id, episode_id, quality_options)
+    state = await get_user_state(session, query.from_user.id)
+    current_quality_id = state.preferred_quality_id
+    if current_quality_id is None and state.active_variant_id:
+        variant = await fetch_variant(session, state.active_variant_id)
+        if variant:
+            current_quality_id = variant.quality_id
+    keyboard = keyboards.quality_menu_keyboard(
+        title_id,
+        episode_id,
+        quality_options,
+        current_quality_id,
+    )
     await query.message.edit_reply_markup(reply_markup=keyboard)
     await query.answer()
 
@@ -294,8 +353,8 @@ async def _handle_audio_set(
     episode_id = int(parts[2]) if len(parts) > 3 else None
     audio_id = int(parts[-1])
     state = await get_user_state(session, tg_user_id)
-    quality_id = None
-    if state.active_variant_id:
+    quality_id = state.preferred_quality_id
+    if quality_id is None and state.active_variant_id:
         variant = await fetch_variant(session, state.active_variant_id)
         if variant:
             quality_id = variant.quality_id
@@ -305,6 +364,21 @@ async def _handle_audio_set(
     if quality_id is None:
         await query.answer("Нет качества для выбора.", show_alert=True)
         return
+    await update_user_preferences(session, tg_user_id, preferred_audio_id=audio_id)
+    response = await _post_service_json(
+        settings,
+        "/api/internal/bot/watch/resolve",
+        {
+            "tg_user_id": tg_user_id,
+            "title_id": title_id,
+            "episode_id": episode_id,
+            "audio_id": audio_id,
+            "quality_id": quality_id,
+        },
+    )
+    if not response:
+        await query.answer("Нет доступного варианта.", show_alert=True)
+        return
     await _handle_watch_request(
         query.bot,
         session,
@@ -312,8 +386,8 @@ async def _handle_audio_set(
         tg_user_id,
         title_id,
         episode_id,
-        audio_id,
-        quality_id,
+        response["audio_id"],
+        response["quality_id"],
     )
     await query.answer()
 
@@ -330,8 +404,8 @@ async def _handle_quality_set(
     episode_id = int(parts[2]) if len(parts) > 3 else None
     quality_id = int(parts[-1])
     state = await get_user_state(session, tg_user_id)
-    audio_id = None
-    if state.active_variant_id:
+    audio_id = state.preferred_audio_id
+    if audio_id is None and state.active_variant_id:
         variant = await fetch_variant(session, state.active_variant_id)
         if variant:
             audio_id = variant.audio_id
@@ -341,6 +415,21 @@ async def _handle_quality_set(
     if audio_id is None:
         await query.answer("Нет озвучки для выбора.", show_alert=True)
         return
+    await update_user_preferences(session, tg_user_id, preferred_quality_id=quality_id)
+    response = await _post_service_json(
+        settings,
+        "/api/internal/bot/watch/resolve",
+        {
+            "tg_user_id": tg_user_id,
+            "title_id": title_id,
+            "episode_id": episode_id,
+            "audio_id": audio_id,
+            "quality_id": quality_id,
+        },
+    )
+    if not response:
+        await query.answer("Нет доступного варианта.", show_alert=True)
+        return
     await _handle_watch_request(
         query.bot,
         session,
@@ -348,8 +437,8 @@ async def _handle_quality_set(
         tg_user_id,
         title_id,
         episode_id,
-        audio_id,
-        quality_id,
+        response["audio_id"],
+        response["quality_id"],
     )
     await query.answer()
 

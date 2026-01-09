@@ -53,6 +53,10 @@ class UserState(Base):
     active_variant_id: Mapped[int | None] = mapped_column(Integer)
     active_title_id: Mapped[int | None] = mapped_column(Integer)
     active_episode_id: Mapped[int | None] = mapped_column(Integer)
+    preferred_audio_id: Mapped[int | None] = mapped_column(Integer)
+    preferred_quality_id: Mapped[int | None] = mapped_column(Integer)
+    last_title_id: Mapped[int | None] = mapped_column(Integer)
+    last_episode_id: Mapped[int | None] = mapped_column(Integer)
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
