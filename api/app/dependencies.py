@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import SessionLocal
 from app.models import User, UserPremium
+from app.services.rate_limit import check_rate_limit, hash_token
 
 
 class CurrentUser(BaseModel):
@@ -21,6 +22,10 @@ class CurrentUser(BaseModel):
     username: str | None
     first_name: str | None
     premium_until: datetime | None
+
+
+class BannedUserError(Exception):
+    pass
 
 
 async def get_db_session() -> AsyncSession:
@@ -109,7 +114,13 @@ async def _get_premium_until(session: AsyncSession, user_id: int) -> datetime | 
     return result.scalar_one_or_none()
 
 
+def _ensure_not_banned(user: User) -> None:
+    if user.is_banned:
+        raise BannedUserError()
+
+
 async def get_current_user(
+    request: Request,
     x_init_data: str | None = Header(default=None, alias="X-Init-Data"),
     x_dev_user_id: str | None = Header(default=None, alias="X-Dev-User-Id"),
     session: AsyncSession = Depends(get_db_session),
@@ -118,6 +129,8 @@ async def get_current_user(
         tg_user_id = _get_dev_user_id(x_dev_user_id)
         user = await _upsert_user(session, tg_user_id, None, None, None)
         premium_until = await _get_premium_until(session, user.id)
+        _ensure_not_banned(user)
+        request.state.tg_user_id = user.tg_user_id
         return CurrentUser(
             id=user.id,
             tg_user_id=user.tg_user_id,
@@ -145,6 +158,8 @@ async def get_current_user(
         user_payload.get("language_code"),
     )
     premium_until = await _get_premium_until(session, user.id)
+    _ensure_not_banned(user)
+    request.state.tg_user_id = user.tg_user_id
     return CurrentUser(
         id=user.id,
         tg_user_id=user.tg_user_id,
@@ -160,12 +175,20 @@ def is_premium_active(premium_until: datetime | None) -> bool:
     return premium_until > datetime.now(timezone.utc)
 
 
-def get_service_token(
+async def _rate_limit_token(token: str, limit: int) -> None:
+    key = f"ratelimit:token:{hash_token(token)}"
+    result = await check_rate_limit(key, limit, 60)
+    if not result.allowed:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="rate_limited")
+
+
+async def get_service_token(
     x_service_token: str | None = Header(default=None, alias="X-Service-Token"),
 ) -> None:
     expected = os.getenv("SERVICE_TOKEN")
     if not expected or x_service_token != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_service_token")
+    await _rate_limit_token(expected, 120)
 
 
 def _parse_admin_allowlist(raw: str | None) -> set[int]:
@@ -186,13 +209,14 @@ def _parse_admin_allowlist(raw: str | None) -> set[int]:
     return ids
 
 
-def get_admin_token(
+async def get_admin_token(
     x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
     x_admin_user_id: str | None = Header(default=None, alias="X-Admin-User-Id"),
 ) -> dict:
     expected = os.getenv("ADMIN_SERVICE_TOKEN") or os.getenv("SERVICE_TOKEN")
     if not expected or x_admin_token != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_admin_token")
+    await _rate_limit_token(expected, 60)
     allowlist = _parse_admin_allowlist(os.getenv("ADMIN_ALLOWLIST"))
     if allowlist:
         if not x_admin_user_id:

@@ -3,7 +3,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db_session, get_service_token, is_premium_active, _upsert_user
@@ -17,7 +17,13 @@ from app.models import (
     UserPremium,
 )
 from app.redis import get_redis, json_set, setnx_with_ttl
-from app.services.referrals import apply_referral_code, ensure_referral_code, get_referral_reward_days
+from app.services.rate_limit import rate_limit_response, register_violation
+from app.services.referrals import (
+    ReferralRateLimitError,
+    apply_referral_code,
+    ensure_referral_code,
+    get_referral_reward_days,
+)
 
 router = APIRouter()
 
@@ -78,6 +84,17 @@ class ReferralCodeRequest(BaseModel):
     username: str | None = None
     first_name: str | None = None
     language_code: str | None = None
+
+
+async def _count_keys(redis, pattern: str) -> int:
+    total = 0
+    cursor = 0
+    while True:
+        cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=200)
+        total += len(keys)
+        if cursor == 0:
+            break
+    return total
 
 
 @router.post("/internal/bot/send_watch_card")
@@ -294,12 +311,17 @@ async def apply_referral_internal(
         payload.first_name,
         payload.language_code,
     )
-    applied = await apply_referral_code(
-        session,
-        user,
-        payload.code,
-        get_referral_reward_days(),
-    )
+    try:
+        applied = await apply_referral_code(
+            session,
+            user,
+            payload.code,
+            get_referral_reward_days(),
+            actor_type="service",
+        )
+    except ReferralRateLimitError as exc:
+        await register_violation(session, payload.tg_user_id)
+        return rate_limit_response(exc.retry_after)
     return {"applied": applied}
 
 
@@ -320,6 +342,53 @@ async def get_referral_code_internal(
     base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
     link = f"{base_url}?startapp=ref_{code}" if base_url else f"?startapp=ref_{code}"
     return {"code": code, "link": link}
+
+
+@router.get("/internal/metrics")
+async def get_metrics(
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    redis = get_redis()
+    queues = [
+        "send_watch_card_queue",
+        "send_video_queue",
+        "send_video_vip_queue",
+        "notify_queue",
+        "uploader_control_queue",
+    ]
+    queue_lengths = {queue: await redis.llen(queue) for queue in queues}
+
+    upload_statuses = ["queued", "uploading", "failed", "done"]
+    upload_counts = {}
+    for status_name in upload_statuses:
+        result = await session.execute(
+            select(func.count()).select_from(UploadJob).where(UploadJob.status == status_name)
+        )
+        upload_counts[status_name] = result.scalar_one()
+
+    variant_statuses = ["pending", "ready", "failed"]
+    variant_counts = {}
+    for status_name in variant_statuses:
+        result = await session.execute(
+            select(func.count()).select_from(MediaVariant).where(MediaVariant.status == status_name)
+        )
+        variant_counts[status_name] = result.scalar_one()
+
+    users_total = await session.execute(select(func.count()).select_from(User))
+    users_banned = await session.execute(
+        select(func.count()).select_from(User).where(User.is_banned.is_(True))
+    )
+
+    ads_passes = await _count_keys(redis, "ad_pass:*")
+
+    return {
+        "queue_lengths": queue_lengths,
+        "upload_jobs": upload_counts,
+        "variants": variant_counts,
+        "users": {"total": users_total.scalar_one(), "banned": users_banned.scalar_one()},
+        "ads": {"passes_active_estimate": ads_passes},
+    }
 
 
 async def _get_or_create_user(session: AsyncSession, tg_user_id: int) -> User:

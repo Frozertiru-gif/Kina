@@ -5,6 +5,7 @@ from aiogram import Bot, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import keyboards
@@ -28,6 +29,7 @@ logger = logging.getLogger("kina.bot.handlers")
 def build_router(
     settings: Settings,
     session_maker: async_sessionmaker[AsyncSession],
+    redis: Redis,
 ) -> Router:
     router = Router()
 
@@ -37,6 +39,22 @@ def build_router(
         if not data:
             return
         tg_user_id = query.from_user.id
+        prefix = _callback_prefix(data)
+        if not await _debounce_callback(redis, tg_user_id, prefix):
+            await query.answer("Слишком часто")
+            return
+        if prefix == "reopen":
+            if not await _limit_reopen(redis, tg_user_id):
+                await query.answer("Слишком часто")
+                return
+        logger.info(
+            "callback received",
+            extra={
+                "tg_user_id": tg_user_id,
+                "action": "callback",
+                "request_id": query.id,
+            },
+        )
         async with session_maker() as session:
             if data == "hide":
                 await _handle_hide(query, settings)
@@ -97,6 +115,14 @@ def build_router(
                 await message.answer("Реферальный код не применён.")
         else:
             await message.answer("Добро пожаловать в Kina!")
+        logger.info(
+            "start handled",
+            extra={
+                "tg_user_id": message.from_user.id,
+                "action": "start",
+                "request_id": str(message.message_id),
+            },
+        )
 
     @router.message(Command("ref"))
     async def on_ref(message: Message) -> None:
@@ -121,8 +147,33 @@ def build_router(
             "Поделитесь ссылкой:\n"
             f"{link}"
         )
+        logger.info(
+            "ref handled",
+            extra={
+                "tg_user_id": message.from_user.id,
+                "action": "ref",
+                "request_id": str(message.message_id),
+            },
+        )
 
     return router
+
+
+def _callback_prefix(data: str) -> str:
+    return data.split(":", 1)[0]
+
+
+async def _debounce_callback(redis: Redis, tg_user_id: int, prefix: str) -> bool:
+    key = f"cb:{tg_user_id}:{prefix}"
+    return bool(await redis.set(key, "1", ex=1, nx=True))
+
+
+async def _limit_reopen(redis: Redis, tg_user_id: int) -> bool:
+    key = f"cb_reopen:{tg_user_id}"
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, 30)
+    return count <= 5
 
 
 async def _handle_hide(query: CallbackQuery, settings: Settings) -> None:

@@ -7,10 +7,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db_session
+from app.dependencies import _ensure_not_banned, get_db_session
 from app.models import UserPremium
 from app.dependencies import _get_dev_user_id, _is_dev_bypass_allowed, _upsert_user, _validate_init_data
-from app.services.referrals import apply_referral_code, get_referral_reward_days
+from app.services.rate_limit import rate_limit_response, register_violation
+from app.services.referrals import (
+    ReferralRateLimitError,
+    apply_referral_code,
+    get_referral_reward_days,
+)
 
 router = APIRouter()
 
@@ -46,13 +51,18 @@ async def auth_webapp(
     if _is_dev_bypass_allowed() and not init_data:
         tg_user_id = _get_dev_user_id(x_dev_user_id)
         user = await _upsert_user(session, tg_user_id, None, None, None)
+        _ensure_not_banned(user)
         if referral_code:
-            await apply_referral_code(
-                session,
-                user,
-                referral_code,
-                get_referral_reward_days(),
-            )
+            try:
+                await apply_referral_code(
+                    session,
+                    user,
+                    referral_code,
+                    get_referral_reward_days(),
+                )
+            except ReferralRateLimitError as exc:
+                await register_violation(session, tg_user_id)
+                return rate_limit_response(exc.retry_after)
         premium_until = await _get_premium_until(session, user.id)
         return WebAppAuthResponse(
             id=user.id,
@@ -80,13 +90,18 @@ async def auth_webapp(
         user_payload.get("first_name"),
         user_payload.get("language_code"),
     )
+    _ensure_not_banned(user)
     if referral_code:
-        await apply_referral_code(
-            session,
-            user,
-            referral_code,
-            get_referral_reward_days(),
-        )
+        try:
+            await apply_referral_code(
+                session,
+                user,
+                referral_code,
+                get_referral_reward_days(),
+            )
+        except ReferralRateLimitError as exc:
+            await register_violation(session, tg_user_id)
+            return rate_limit_response(exc.retry_after)
     premium_until = await _get_premium_until(session, user.id)
     return WebAppAuthResponse(
         id=user.id,
