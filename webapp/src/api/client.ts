@@ -1,0 +1,145 @@
+import type {
+  Episode,
+  Title,
+  TitleDetail,
+  TitleType,
+  WatchRequestPayload,
+  WatchResponse,
+} from "./types";
+
+const API_BASE = "/api";
+
+const getTelegramInitData = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const webApp = (window as typeof window & {
+    Telegram?: { WebApp?: { initData?: string; initDataUnsafe?: unknown } };
+  }).Telegram?.WebApp;
+  if (webApp?.initData) {
+    return webApp.initData;
+  }
+  return "";
+};
+
+const getDevUserId = (): string | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return localStorage.getItem("devUserId");
+};
+
+const getAuthHeaders = (): Record<string, string> => {
+  const initData = getTelegramInitData();
+  if (initData) {
+    return { "X-Init-Data": initData };
+  }
+  const devUserId = getDevUserId();
+  if (devUserId) {
+    return { "X-Dev-User-Id": devUserId };
+  }
+  return {};
+};
+
+export class ApiError extends Error {
+  data?: Record<string, unknown> | null;
+
+  constructor(message: string, data?: Record<string, unknown> | null) {
+    super(message);
+    this.name = "ApiError";
+    this.data = data;
+  }
+}
+
+const apiFetch = async <T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> => {
+  const headers = new Headers(options.headers);
+  const authHeaders = getAuthHeaders();
+  Object.entries(authHeaders).forEach(([key, value]) => headers.set(key, value));
+  if (!headers.has("Content-Type") && options.body) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("auth_error");
+  }
+
+  if (!response.ok) {
+    const errorPayload = (await response.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const error = (errorPayload?.error as string | undefined) || response.statusText;
+    throw new ApiError(error, errorPayload);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  return response.json() as Promise<T>;
+};
+
+export const api = {
+  getTop: (type?: TitleType) =>
+    apiFetch<Title[]>(`/catalog/top${type ? `?type=${type}` : ""}`),
+  search: (query: string, type?: TitleType) => {
+    const params = new URLSearchParams();
+    params.set("q", query);
+    if (type) {
+      params.set("type", type);
+    }
+    return apiFetch<Title[]>(`/catalog/search?${params.toString()}`);
+  },
+  getTitle: (id: number) => apiFetch<TitleDetail>(`/title/${id}`),
+  getEpisodes: (id: number, season: number) =>
+    apiFetch<Episode[]>(`/title/${id}/episodes?season=${season}`),
+  getFavorites: () => apiFetch<Title[]>("/favorites"),
+  toggleFavorite: (titleId: number) =>
+    apiFetch<{ title_id: number; favorited: boolean }>("/favorites/toggle", {
+      method: "POST",
+      body: JSON.stringify({ title_id: titleId }),
+    }),
+  getSubscriptions: () =>
+    apiFetch<{ title_id: number; enabled: boolean }[]>("/subscriptions"),
+  toggleSubscription: (titleId: number) =>
+    apiFetch<{ title_id: number; enabled: boolean }>("/subscriptions/toggle", {
+      method: "POST",
+      body: JSON.stringify({ title_id: titleId }),
+    }),
+  watchRequest: (payload: WatchRequestPayload) =>
+    apiFetch<WatchResponse>("/watch/request", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  watchDispatch: (variantId: number) =>
+    apiFetch<{ queued: boolean }>("/watch/dispatch", {
+      method: "POST",
+      body: JSON.stringify({ variant_id: variantId }),
+    }),
+  adsStart: (variantId: number) =>
+    apiFetch<{ nonce: string; ttl: number }>("/ads/start", {
+      method: "POST",
+      body: JSON.stringify({ variant_id: variantId }),
+    }),
+  adsComplete: (nonce: string) =>
+    apiFetch<{ ok: boolean; pass_ttl: number; variant_id: number }>("/ads/complete", {
+      method: "POST",
+      body: JSON.stringify({ nonce }),
+    }),
+};
+
+export const authInfo = {
+  get initData(): string {
+    return getTelegramInitData();
+  },
+  get devUserId(): string | null {
+    return getDevUserId();
+  },
+};

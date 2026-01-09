@@ -1,0 +1,7 @@
+<svg width="360" height="540" viewBox="0 0 360 540" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="360" height="540" fill="#10131a"/>
+  <rect x="24" y="24" width="312" height="492" rx="18" fill="#1a1e2b" stroke="#2a2f44" stroke-width="2"/>
+  <path d="M96 300C96 251.5 130.5 217 179 217C227.5 217 262 251.5 262 300C262 348.5 227.5 383 179 383C130.5 383 96 348.5 96 300Z" fill="#23263a"/>
+  <path d="M171 275L216 300L171 325V275Z" fill="#5B7CFA"/>
+  <text x="50%" y="78%" text-anchor="middle" fill="#AAB2CE" font-family="Inter, sans-serif" font-size="20">Kina</text>
+</svg>
