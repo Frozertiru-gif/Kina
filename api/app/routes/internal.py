@@ -1,12 +1,20 @@
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db_session, get_service_token, is_premium_active
-from app.models import Favorite, MediaVariant, Subscription, Title, User, UserPremium
+from app.models import (
+    Favorite,
+    MediaVariant,
+    Subscription,
+    Title,
+    UploadJob,
+    User,
+    UserPremium,
+)
 from app.redis import get_redis, json_set, setnx_with_ttl
 
 router = APIRouter()
@@ -49,6 +57,10 @@ class WatchRequest(BaseModel):
     episode_id: int | None = None
     audio_id: int
     quality_id: int
+
+
+class RetryUploadJobRequest(BaseModel):
+    job_id: int
 
 
 @router.post("/internal/bot/send_watch_card")
@@ -195,6 +207,61 @@ async def watch_request_internal(
         "title_id": payload.title_id,
         "episode_id": payload.episode_id,
     }
+
+
+@router.post("/internal/uploader/retry_job")
+async def retry_upload_job(
+    payload: RetryUploadJobRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    result = await session.execute(select(UploadJob).where(UploadJob.id == payload.job_id))
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
+    job.status = "queued"
+    job.last_error = None
+    job.attempts = 0
+    variant = await session.get(MediaVariant, job.variant_id)
+    if variant:
+        variant.status = "uploading"
+        variant.error = None
+    await session.commit()
+    return {"job_id": job.id, "status": job.status}
+
+
+@router.get("/internal/uploader/jobs")
+async def list_upload_jobs(
+    status: str | None = Query(default=None, max_length=50),
+    limit: int = Query(default=50, ge=1, le=200),
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    query = select(UploadJob).order_by(UploadJob.id.desc()).limit(limit)
+    if status:
+        query = query.where(UploadJob.status == status)
+    result = await session.execute(query)
+    jobs = result.scalars().all()
+    return {
+        "items": [
+            {
+                "id": job.id,
+                "variant_id": job.variant_id,
+                "status": job.status,
+                "attempts": job.attempts,
+                "local_path": job.local_path,
+                "last_error": job.last_error,
+            }
+            for job in jobs
+        ]
+    }
+
+
+@router.post("/internal/uploader/rescan")
+async def uploader_rescan(_: None = Depends(get_service_token)) -> dict:
+    redis = get_redis()
+    await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
+    return {"queued": True}
 
 
 async def _get_or_create_user(session: AsyncSession, tg_user_id: int) -> User:
