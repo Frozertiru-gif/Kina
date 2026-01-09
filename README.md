@@ -45,6 +45,9 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - GET  /api/favorites
 - POST /api/favorites/toggle
 - POST /api/watch/request
+- POST /api/ads/start
+- POST /api/ads/complete
+- GET  /api/ads/status
 - POST /api/internal/bot/send_watch_card
 - POST /api/internal/bot/send_video
 - POST /api/internal/bot/send_notification
@@ -78,6 +81,29 @@ curl -X POST http://localhost/api/watch/request \\
 curl -X POST http://localhost/api/watch/request \\
   -H 'Content-Type: application/json' \\
   -H 'X-Init-Data: <telegram_init_data>' \\
+  -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
+```
+
+### Ads flow (DEV bypass)
+```bash
+curl -X POST http://localhost/api/watch/request \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Dev-User-Id: 123456' \\
+  -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
+
+curl -X POST http://localhost/api/ads/start \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Dev-User-Id: 123456' \\
+  -d '{"variant_id":1}'
+
+curl -X POST http://localhost/api/ads/complete \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Dev-User-Id: 123456' \\
+  -d '{"nonce":"<nonce_from_ads_start>"}'
+
+curl -X POST http://localhost/api/watch/request \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Dev-User-Id: 123456' \\
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
 ```
 
