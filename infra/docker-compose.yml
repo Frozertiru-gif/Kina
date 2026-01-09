@@ -1,0 +1,79 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: ../api
+    env_file: ../.env
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+
+  bot:
+    build:
+      context: ../bot
+    env_file: ../.env
+    depends_on:
+      - redis
+      - postgres
+      - telegram-bot-api
+
+  uploader:
+    build:
+      context: ../uploader
+    env_file: ../.env
+    profiles: ["tools"]
+    depends_on:
+      - telegram-bot-api
+
+  webapp:
+    build:
+      context: ../webapp
+    ports:
+      - "5173:80"
+
+  admin:
+    build:
+      context: ../admin
+    ports:
+      - "5174:80"
+
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID:-replace_me}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:-replace_me}
+    ports:
+      - "8081:8081"
+
+  nginx:
+    image: nginx:1.25-alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+      - webapp
+      - admin
+
+volumes:
+  postgres_data:
