@@ -12,6 +12,7 @@ from app.models import (
     MediaVariant,
     Subscription,
     Title,
+    TitleType,
     UploadJob,
     User,
     UserPremium,
@@ -168,27 +169,16 @@ async def toggle_subscription_internal(
     _: None = Depends(get_service_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    user = await _get_or_create_user(session, payload.tg_user_id)
-    result = await session.execute(
-        select(Subscription).where(
-            Subscription.user_id == user.id,
-            Subscription.title_id == payload.title_id,
-        )
-    )
-    subscription = result.scalar_one_or_none()
-    if subscription:
-        subscription.enabled = not subscription.enabled
-        await session.commit()
-        return {"title_id": payload.title_id, "enabled": subscription.enabled}
+    return await _toggle_subscription(session, payload.tg_user_id, payload.title_id)
 
-    title_result = await session.execute(select(Title).where(Title.id == payload.title_id))
-    title = title_result.scalar_one_or_none()
-    if not title:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
 
-    session.add(Subscription(user_id=user.id, title_id=payload.title_id, enabled=True))
-    await session.commit()
-    return {"title_id": payload.title_id, "enabled": True}
+@router.post("/internal/user/subscription_toggle")
+async def toggle_subscription_internal_user(
+    payload: ToggleSubscriptionRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    return await _toggle_subscription(session, payload.tg_user_id, payload.title_id)
 
 
 @router.post("/internal/bot/watch/request")
@@ -389,6 +379,35 @@ async def get_metrics(
         "users": {"total": users_total.scalar_one(), "banned": users_banned.scalar_one()},
         "ads": {"passes_active_estimate": ads_passes},
     }
+
+
+async def _toggle_subscription(
+    session: AsyncSession,
+    tg_user_id: int,
+    title_id: int,
+) -> dict:
+    user = await _get_or_create_user(session, tg_user_id)
+    title_result = await session.execute(select(Title).where(Title.id == title_id))
+    title = title_result.scalar_one_or_none()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+    if title.type != TitleType.SERIES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="series_only")
+    result = await session.execute(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.title_id == title_id,
+        )
+    )
+    subscription = result.scalar_one_or_none()
+    if subscription:
+        subscription.enabled = not subscription.enabled
+        await session.commit()
+        return {"title_id": title_id, "enabled": subscription.enabled}
+
+    session.add(Subscription(user_id=user.id, title_id=title_id, enabled=True))
+    await session.commit()
+    return {"title_id": title_id, "enabled": True}
 
 
 async def _get_or_create_user(session: AsyncSession, tg_user_id: int) -> User:

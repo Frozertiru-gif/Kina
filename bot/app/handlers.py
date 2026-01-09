@@ -221,7 +221,7 @@ async def _handle_toggle_sub(query: CallbackQuery, settings: Settings, data: str
     title_id = int(data.split(":")[1])
     await _post_service_json(
         settings,
-        "/api/internal/bot/subscriptions/toggle",
+        "/api/internal/user/subscription_toggle",
         {"tg_user_id": query.from_user.id, "title_id": title_id},
     )
     await query.answer("Подписка обновлена")
