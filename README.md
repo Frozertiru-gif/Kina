@@ -32,6 +32,27 @@ Production-grade mono-repo skeleton for API, Telegram bot, uploader service, and
 - http://localhost/admin/ (admin)
 - http://localhost/api/health (api)
 
+## Telegram Bot
+The bot reads Redis queues and sends cards/videos to users. It does not search titles in chat.
+
+### Required ENV
+- `BOT_TOKEN`
+- `REDIS_URL`
+- `DATABASE_URL`
+- `SERVICE_TOKEN`
+- `API_BASE_URL`
+
+### Run bot (Docker)
+```bash
+docker compose up --build bot
+```
+
+### Redis queues
+- `send_watch_card_queue` → `{tg_user_id, variant_id, title_id, episode_id, mode}`
+- `send_video_queue` → `{tg_user_id, variant_id}`
+- `send_video_vip_queue` → `{tg_user_id, variant_id}`
+- `notify_queue` → `{tg_user_id, title_id, episode_id, text}`
+
 ## API v1 (DEV auth bypass)
 Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or header).
 
@@ -109,4 +130,4 @@ curl -X POST http://localhost/api/watch/request \\
 
 ## Notes
 - The Nginx container serves placeholder HTML pages for `/` and `/admin/`.
-- Bot startup fails fast when `BOT_TOKEN`/`TELEGRAM_BOT_TOKEN` is missing.
+- Bot startup fails fast when `BOT_TOKEN` is missing.

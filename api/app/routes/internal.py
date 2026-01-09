@@ -1,10 +1,13 @@
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_service_token
-from app.redis import get_redis
+from app.dependencies import get_db_session, get_service_token, is_premium_active
+from app.models import Favorite, MediaVariant, Subscription, Title, User, UserPremium
+from app.redis import get_redis, json_set, setnx_with_ttl
 
 router = APIRouter()
 
@@ -28,6 +31,24 @@ class SendNotificationRequest(BaseModel):
     title_id: int
     episode_id: int | None = None
     text: str
+
+
+class ToggleFavoriteRequest(BaseModel):
+    tg_user_id: int
+    title_id: int
+
+
+class ToggleSubscriptionRequest(BaseModel):
+    tg_user_id: int
+    title_id: int
+
+
+class WatchRequest(BaseModel):
+    tg_user_id: int
+    title_id: int
+    episode_id: int | None = None
+    audio_id: int
+    quality_id: int
 
 
 @router.post("/internal/bot/send_watch_card")
@@ -64,3 +85,135 @@ async def send_notification(
     queue = "notify_queue"
     await redis.rpush(queue, json.dumps(payload.model_dump(), ensure_ascii=False))
     return {"queued": True, "queue": queue}
+
+
+@router.post("/internal/bot/favorites/toggle")
+async def toggle_favorite_internal(
+    payload: ToggleFavoriteRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await _get_or_create_user(session, payload.tg_user_id)
+    result = await session.execute(
+        select(Favorite).where(
+            Favorite.user_id == user.id,
+            Favorite.title_id == payload.title_id,
+        )
+    )
+    favorite = result.scalar_one_or_none()
+    if favorite:
+        await session.delete(favorite)
+        await session.commit()
+        return {"title_id": payload.title_id, "favorited": False}
+
+    title_result = await session.execute(select(Title).where(Title.id == payload.title_id))
+    title = title_result.scalar_one_or_none()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+
+    session.add(Favorite(user_id=user.id, title_id=payload.title_id))
+    await session.commit()
+    return {"title_id": payload.title_id, "favorited": True}
+
+
+@router.post("/internal/bot/subscriptions/toggle")
+async def toggle_subscription_internal(
+    payload: ToggleSubscriptionRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await _get_or_create_user(session, payload.tg_user_id)
+    result = await session.execute(
+        select(Subscription).where(
+            Subscription.user_id == user.id,
+            Subscription.title_id == payload.title_id,
+        )
+    )
+    subscription = result.scalar_one_or_none()
+    if subscription:
+        subscription.enabled = not subscription.enabled
+        await session.commit()
+        return {"title_id": payload.title_id, "enabled": subscription.enabled}
+
+    title_result = await session.execute(select(Title).where(Title.id == payload.title_id))
+    title = title_result.scalar_one_or_none()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+
+    session.add(Subscription(user_id=user.id, title_id=payload.title_id, enabled=True))
+    await session.commit()
+    return {"title_id": payload.title_id, "enabled": True}
+
+
+@router.post("/internal/bot/watch/request")
+async def watch_request_internal(
+    payload: WatchRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    throttle_key = f"watchreq:{payload.tg_user_id}"
+    allowed = await setnx_with_ttl(throttle_key, 2)
+    if not allowed:
+        return {"error": "too_many_requests"}
+
+    variant_query = select(MediaVariant).where(
+        MediaVariant.audio_id == payload.audio_id,
+        MediaVariant.quality_id == payload.quality_id,
+    )
+    if payload.episode_id is None:
+        variant_query = variant_query.where(
+            MediaVariant.title_id == payload.title_id,
+            MediaVariant.episode_id.is_(None),
+        )
+    else:
+        variant_query = variant_query.where(MediaVariant.episode_id == payload.episode_id)
+    variant_query = variant_query.where(MediaVariant.status.in_(["pending", "ready"]))
+    variant_result = await session.execute(variant_query)
+    variant = variant_result.scalar_one_or_none()
+    if not variant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
+
+    premium_until = await _get_premium_until(session, payload.tg_user_id)
+    premium_active = is_premium_active(premium_until)
+    mode = "direct" if premium_active else "ad_gate"
+    if not premium_active:
+        redis = get_redis()
+        pass_key = f"ad_pass:{payload.tg_user_id}:{variant.id}"
+        if await redis.exists(pass_key):
+            mode = "direct"
+    watchctx_key = f"watchctx:{payload.tg_user_id}"
+    watch_ctx = {
+        "variant_id": variant.id,
+        "title_id": payload.title_id,
+        "episode_id": payload.episode_id,
+    }
+    await json_set(watchctx_key, 600, watch_ctx)
+
+    return {
+        "mode": mode,
+        "variant_id": variant.id,
+        "title_id": payload.title_id,
+        "episode_id": payload.episode_id,
+    }
+
+
+async def _get_or_create_user(session: AsyncSession, tg_user_id: int) -> User:
+    result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+    user = result.scalar_one_or_none()
+    if user:
+        return user
+    user = User(tg_user_id=tg_user_id)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    return user
+
+
+async def _get_premium_until(session: AsyncSession, tg_user_id: int):
+    result = await session.execute(
+        select(UserPremium)
+        .join(User, UserPremium.user_id == User.id)
+        .where(User.tg_user_id == tg_user_id)
+    )
+    record = result.scalar_one_or_none()
+    return record.premium_until if record else None
