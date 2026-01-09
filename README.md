@@ -72,6 +72,9 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - POST /api/internal/bot/send_watch_card
 - POST /api/internal/bot/send_video
 - POST /api/internal/bot/send_notification
+- POST /api/internal/uploader/retry_job
+- GET  /api/internal/uploader/jobs
+- POST /api/internal/uploader/rescan
 
 ### Auth (DEV bypass)
 ```bash
@@ -131,3 +134,56 @@ curl -X POST http://localhost/api/watch/request \\
 ## Notes
 - The Nginx container serves placeholder HTML pages for `/` and `/admin/`.
 - Bot startup fails fast when `BOT_TOKEN` is missing.
+
+## Uploader Service
+Uploader watches the ingest folder, matches files to media variants, uploads them to Telegram
+storage chat, and writes `file_id` + message details into the DB.
+
+### Required ENV
+- `STORAGE_CHAT_ID` (Telegram storage chat ID)
+- `BOT_TOKEN`
+- `DATABASE_URL`
+- `REDIS_URL`
+- `UPLOAD_INGEST_DIR`
+
+### Optional ENV
+- `UPLOAD_ARCHIVE_DIR` (archive uploaded files)
+- `UPLOAD_FAILED_DIR` (move invalid/failed files)
+- `UPLOAD_POLL_SECONDS`
+- `UPLOAD_MAX_RETRIES`
+- `UPLOAD_BACKOFF_SECONDS`
+- `UPLOAD_MAX_CONCURRENT`
+- `UPLOAD_MAX_FILE_MB`
+- `USE_LOCAL_BOT_API` (default `true`)
+- `LOCAL_BOT_API_BASE_URL`
+- `TELEGRAM_API_BASE_URL`
+
+### Upload flow
+1. Place file in ingest directory (default `./data/ingest`).
+2. Uploader parses the filename and matches `media_variants`.
+3. Uploader sends video to storage chat via `sendVideo`.
+4. DB is updated with `telegram_file_id`, `storage_message_id`, `storage_chat_id`, and status.
+
+### Naming convention
+- Movie: `title_<title_id>__a_<audio_id>__q_<quality_id>.mp4`
+- Episode: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mkv`
+
+Examples:
+- `title_12__a_1__q_2.mp4`
+- `ep_345__a_1__q_2.mkv`
+
+### Check uploader jobs
+```bash
+curl -H \"Authorization: Bearer $SERVICE_TOKEN\" \\
+  \"http://localhost/api/internal/uploader/jobs?status=failed&limit=50\"
+```
+
+### Trigger rescan
+```bash
+curl -X POST -H \"Authorization: Bearer $SERVICE_TOKEN\" \\
+  http://localhost/api/internal/uploader/rescan
+```
+
+### Local Bot API
+Set `USE_LOCAL_BOT_API=true` and `LOCAL_BOT_API_BASE_URL=http://local-bot-api:8081` to send
+uploads to a local Bot API instance instead of `https://api.telegram.org`.

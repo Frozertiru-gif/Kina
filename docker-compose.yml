@@ -43,6 +43,10 @@ services:
     depends_on:
       - postgres
       - redis
+    volumes:
+      - ./data/ingest:/data/ingest
+      - ./data/archive:/data/archive
+      - ./data/failed:/data/failed
 
   nginx:
     image: nginx:alpine
