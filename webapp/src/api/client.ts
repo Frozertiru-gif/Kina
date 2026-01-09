@@ -1,5 +1,7 @@
 import type {
+  AuthResponse,
   Episode,
+  ReferralInfo,
   Title,
   TitleDetail,
   TitleType,
@@ -87,6 +89,15 @@ const apiFetch = async <T>(
 };
 
 export const api = {
+  authWebapp: (ref?: string | null) =>
+    apiFetch<AuthResponse>("/auth/webapp", {
+      method: "POST",
+      body: JSON.stringify({
+        initData: getTelegramInitData() || null,
+        ref: ref || null,
+      }),
+    }),
+  getReferralMe: () => apiFetch<ReferralInfo>("/referral/me"),
   getTop: (type?: TitleType) =>
     apiFetch<Title[]>(`/catalog/top${type ? `?type=${type}` : ""}`),
   search: (query: string, type?: TitleType) => {

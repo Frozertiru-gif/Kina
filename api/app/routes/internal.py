@@ -1,11 +1,12 @@
 import json
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db_session, get_service_token, is_premium_active
+from app.dependencies import get_db_session, get_service_token, is_premium_active, _upsert_user
 from app.models import (
     Favorite,
     MediaVariant,
@@ -16,6 +17,7 @@ from app.models import (
     UserPremium,
 )
 from app.redis import get_redis, json_set, setnx_with_ttl
+from app.services.referrals import apply_referral_code, ensure_referral_code, get_referral_reward_days
 
 router = APIRouter()
 
@@ -61,6 +63,21 @@ class WatchRequest(BaseModel):
 
 class RetryUploadJobRequest(BaseModel):
     job_id: int
+
+
+class ReferralApplyRequest(BaseModel):
+    tg_user_id: int
+    code: str
+    username: str | None = None
+    first_name: str | None = None
+    language_code: str | None = None
+
+
+class ReferralCodeRequest(BaseModel):
+    tg_user_id: int
+    username: str | None = None
+    first_name: str | None = None
+    language_code: str | None = None
 
 
 @router.post("/internal/bot/send_watch_card")
@@ -262,6 +279,47 @@ async def uploader_rescan(_: None = Depends(get_service_token)) -> dict:
     redis = get_redis()
     await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
     return {"queued": True}
+
+
+@router.post("/internal/referral/apply")
+async def apply_referral_internal(
+    payload: ReferralApplyRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await _upsert_user(
+        session,
+        payload.tg_user_id,
+        payload.username,
+        payload.first_name,
+        payload.language_code,
+    )
+    applied = await apply_referral_code(
+        session,
+        user,
+        payload.code,
+        get_referral_reward_days(),
+    )
+    return {"applied": applied}
+
+
+@router.post("/internal/referral/code")
+async def get_referral_code_internal(
+    payload: ReferralCodeRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await _upsert_user(
+        session,
+        payload.tg_user_id,
+        payload.username,
+        payload.first_name,
+        payload.language_code,
+    )
+    code = await ensure_referral_code(session, user.id)
+    base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+    link = f"{base_url}?startapp=ref_{code}" if base_url else f"?startapp=ref_{code}"
+    return {"code": code, "link": link}
 
 
 async def _get_or_create_user(session: AsyncSession, tg_user_id: int) -> User:

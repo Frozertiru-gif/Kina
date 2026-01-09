@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db_session
 from app.models import UserPremium
 from app.dependencies import _get_dev_user_id, _is_dev_bypass_allowed, _upsert_user, _validate_init_data
+from app.services.referrals import apply_referral_code, get_referral_reward_days
 
 router = APIRouter()
 
 
 class WebAppAuthRequest(BaseModel):
     initData: str | None = None
+    ref: str | None = None
 
 
 class WebAppAuthResponse(BaseModel):
@@ -40,9 +42,17 @@ async def auth_webapp(
     session: AsyncSession = Depends(get_db_session),
 ) -> WebAppAuthResponse:
     init_data = payload.initData
+    referral_code = payload.ref
     if _is_dev_bypass_allowed() and not init_data:
         tg_user_id = _get_dev_user_id(x_dev_user_id)
         user = await _upsert_user(session, tg_user_id, None, None, None)
+        if referral_code:
+            await apply_referral_code(
+                session,
+                user,
+                referral_code,
+                get_referral_reward_days(),
+            )
         premium_until = await _get_premium_until(session, user.id)
         return WebAppAuthResponse(
             id=user.id,
@@ -70,6 +80,13 @@ async def auth_webapp(
         user_payload.get("first_name"),
         user_payload.get("language_code"),
     )
+    if referral_code:
+        await apply_referral_code(
+            session,
+            user,
+            referral_code,
+            get_referral_reward_days(),
+        )
     premium_until = await _get_premium_until(session, user.id)
     return WebAppAuthResponse(
         id=user.id,
