@@ -10,7 +10,8 @@ from pathlib import Path
 import httpx
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
-from sqlalchemy import BigInteger, Boolean, Integer, String, Text, select
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -86,6 +87,20 @@ class User(Base):
     tg_user_id: Mapped[int] = mapped_column(BigInteger)
 
 
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    actor_type: Mapped[str] = mapped_column(String(20))
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    actor_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
+    action: Mapped[str] = mapped_column(String(255))
+    entity_type: Mapped[str] = mapped_column(String(255))
+    entity_id: Mapped[int | None] = mapped_column(Integer)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
+
+
 @dataclass(frozen=True)
 class ParsedVariant:
     kind: str
@@ -99,13 +114,33 @@ MOVIE_PATTERN = re.compile(r"^title_(\d+)__a_(\d+)__q_(\d+)\.[^.]+$")
 EPISODE_PATTERN = re.compile(r"^ep_(\d+)__a_(\d+)__q_(\d+)\.[^.]+$")
 
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("kina.uploader")
+
+
+async def _log_audit_event(
+    session: AsyncSession,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: int | None,
+    metadata: dict | None = None,
+) -> None:
+    session.add(
+        AuditEvent(
+            actor_type="service",
+            actor_user_id=None,
+            actor_admin_id=None,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            metadata_json=metadata,
+        )
+    )
 
 
 async def main() -> None:
     settings = Settings()
-    logger.setLevel(settings.log_level.upper())
+    configure_logging(settings.log_level.upper())
 
     ingest_dir = Path(settings.upload_ingest_dir)
     ingest_dir.mkdir(parents=True, exist_ok=True)
@@ -119,6 +154,8 @@ async def main() -> None:
     logger.info(
         "uploader started",
         extra={
+            "action": "startup",
+            "request_id": "startup",
             "ingest_dir": str(ingest_dir),
             "archive_dir": str(archive_dir) if archive_dir else None,
             "failed_dir": str(failed_dir) if failed_dir else None,
@@ -189,10 +226,20 @@ async def drain_control_queue(redis: Redis) -> bool:
         try:
             message = json.loads(payload)
         except json.JSONDecodeError:
-            logger.warning("invalid control payload", extra={"payload": payload})
+            logger.warning(
+                "invalid control payload",
+                extra={
+                    "action": "control_payload_invalid",
+                    "request_id": "control",
+                    "payload": payload,
+                },
+            )
             continue
         if message.get("action") == "rescan":
-            logger.info("rescan requested")
+            logger.info(
+                "rescan requested",
+                extra={"action": "control_rescan", "request_id": "control"},
+            )
             rescan_requested = True
     return rescan_requested
 
@@ -286,6 +333,8 @@ async def worker_loop(
                 logger.exception(
                     "job failed",
                     extra={
+                        "action": "upload_job_failed",
+                        "request_id": f"job:{job.id}",
                         "job_id": job.id,
                         "variant_id": job.variant_id,
                         "filename": job.local_path,
@@ -308,8 +357,20 @@ async def claim_job(session_factory: async_sessionmaker[AsyncSession]) -> Upload
             job = result.scalars().first()
             if job is None:
                 return None
+            previous_status = job.status
             job.status = "uploading"
             job.attempts += 1
+            await _log_audit_event(
+                session,
+                action="upload_job_status_changed",
+                entity_type="upload_job",
+                entity_id=job.id,
+                metadata={
+                    "from": previous_status,
+                    "to": job.status,
+                    "variant_id": job.variant_id,
+                },
+            )
         await session.commit()
         await session.refresh(job)
         return job
@@ -334,7 +395,12 @@ async def handle_job(
         )
         logger.warning(
             "file missing",
-            extra={"job_id": job.id, "filename": job.local_path},
+            extra={
+                "action": "upload_job_file_missing",
+                "request_id": f"job:{job.id}",
+                "job_id": job.id,
+                "filename": job.local_path,
+            },
         )
         return
 
@@ -347,8 +413,8 @@ async def handle_job(
                 error="variant_missing",
                 variant_status="failed",
             )
-            await move_to_failed(file_path, failed_dir, reason="variant_missing")
-            return
+        await move_to_failed(file_path, failed_dir, reason="variant_missing")
+        return
         variant.status = "uploading"
         await session.commit()
 
@@ -391,6 +457,17 @@ async def handle_job(
 
         job.status = "done"
         job.last_error = None
+        await _log_audit_event(
+            session,
+            action="upload_job_status_changed",
+            entity_type="upload_job",
+            entity_id=job.id,
+            metadata={
+                "from": "uploading",
+                "to": "done",
+                "variant_id": job.variant_id,
+            },
+        )
         await session.commit()
 
         await notify_subscribers_if_needed(
@@ -404,6 +481,8 @@ async def handle_job(
     logger.info(
         "upload success",
         extra={
+            "action": "upload_job_done",
+            "request_id": f"job:{job.id}",
             "job_id": job.id,
             "variant_id": job.variant_id,
             "filename": file_path.name,
@@ -438,6 +517,8 @@ async def handle_upload_error(
     logger.warning(
         "upload error, retrying",
         extra={
+            "action": "upload_job_retry",
+            "request_id": f"job:{job.id}",
             "job_id": job.id,
             "variant_id": variant_id,
             "filename": file_path.name,
@@ -483,6 +564,18 @@ async def mark_job_failed(
         if variant:
             variant.status = variant_status
             variant.error = error
+        await _log_audit_event(
+            session,
+            action="upload_job_status_changed",
+            entity_type="upload_job",
+            entity_id=job.id,
+            metadata={
+                "from": "uploading",
+                "to": "failed",
+                "variant_id": job.variant_id,
+                "error": error,
+            },
+        )
         await session.commit()
 
 
@@ -641,3 +734,4 @@ def _prepare_optional_dir(path_value: str | None) -> Path | None:
 
 if __name__ == "__main__":
     asyncio.run(main())
+from logging_utils import configure_logging

@@ -6,6 +6,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Referral, ReferralCode, ReferralReward, User
+from app.services.audit import log_audit_event
+from app.services.rate_limit import check_rate_limit
+
+
+class ReferralRateLimitError(Exception):
+    def __init__(self, retry_after: int) -> None:
+        self.retry_after = retry_after
+        super().__init__("referral_rate_limited")
 from app.services.premium import apply_premium_days
 
 
@@ -47,6 +55,7 @@ async def apply_referral_code(
     code: str,
     reward_days: int,
     reason: str = "referral_signup",
+    actor_type: str = "user",
 ) -> bool:
     trimmed = code.strip()
     if not trimmed:
@@ -60,6 +69,22 @@ async def apply_referral_code(
         return False
     if ref_code.user_id == referred_user.id:
         return False
+
+    referred_result = await check_rate_limit(
+        f"ratelimit:referral:referred:{referred_user.id}",
+        2,
+        86400,
+    )
+    if not referred_result.allowed:
+        raise ReferralRateLimitError(referred_result.retry_after)
+
+    referrer_result = await check_rate_limit(
+        f"ratelimit:referral:referrer:{ref_code.user_id}",
+        10,
+        86400,
+    )
+    if not referrer_result.allowed:
+        raise ReferralRateLimitError(referrer_result.retry_after)
 
     existing = await session.execute(
         select(Referral).where(Referral.referred_user_id == referred_user.id)
@@ -77,4 +102,19 @@ async def apply_referral_code(
     session.add_all([referral, reward])
     await session.flush()
     await apply_premium_days(session, ref_code.user_id, reward_days, reason, reward)
+    await log_audit_event(
+        session,
+        actor_type=actor_type,
+        actor_user_id=referred_user.id if actor_type == "user" else None,
+        actor_admin_id=None,
+        action="referral_applied",
+        entity_type="referral",
+        entity_id=referral.id,
+        metadata_json={
+            "referrer_user_id": ref_code.user_id,
+            "referred_user_id": referred_user.id,
+            "reward_days": reward_days,
+        },
+    )
+    await session.commit()
     return True

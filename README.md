@@ -109,12 +109,14 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - POST /api/ads/start
 - POST /api/ads/complete
 - GET  /api/ads/status
+- POST /api/referral/apply
 - POST /api/internal/bot/send_watch_card
 - POST /api/internal/bot/send_video
 - POST /api/internal/bot/send_notification
 - POST /api/internal/uploader/retry_job
 - GET  /api/internal/uploader/jobs
 - POST /api/internal/uploader/rescan
+- GET  /api/internal/metrics
 
 ### Auth (DEV bypass)
 ```bash
@@ -174,6 +176,36 @@ curl -X POST http://localhost/api/watch/dispatch \\
   -H 'Content-Type: application/json' \\
   -H 'X-Dev-User-Id: 123456' \\
   -d '{"variant_id":1}'
+```
+
+## Rate limits (API)
+| Scope | Endpoint | Limit |
+| --- | --- | --- |
+| User | `GET /api/catalog/search` | 10 requests / 10 seconds |
+| User | `POST /api/watch/request` | 20 requests / 60 seconds (plus 2s debounce) |
+| User | `POST /api/ads/start` | 5 requests / 60 seconds |
+| User | `POST /api/ads/complete` | 10 requests / 60 seconds |
+| User | `POST /api/referral/apply` | 2 requests / 24 hours per referred user |
+| Referrer | `POST /api/referral/apply` | 10 requests / 24 hours per referrer |
+| Admin token | `/api/admin/*` | 60 requests / 60 seconds |
+| Service token | `/api/internal/*` | 120 requests / 60 seconds |
+
+## Admin user moderation
+Ban/unban users:
+```bash
+curl -X POST http://localhost/api/admin/users/123/ban \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"reason":"abuse"}'
+
+curl -X POST http://localhost/api/admin/users/123/unban \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
+```
+
+## Internal metrics
+```bash
+curl -X GET http://localhost/api/internal/metrics \\
+  -H "X-Service-Token: $SERVICE_TOKEN"
 ```
 
 ## WebApp dev

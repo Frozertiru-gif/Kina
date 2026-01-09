@@ -23,10 +23,35 @@ from app.models import (
     UserPremium,
 )
 from app.redis import get_redis
+from app.services.audit import log_audit_event
 from app.services.premium import apply_premium_days
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = logging.getLogger("kina.api.admin")
+
+
+async def _log_admin_event(
+    session: AsyncSession,
+    admin_info: dict,
+    *,
+    action: str,
+    entity_type: str,
+    entity_id: int | None,
+    metadata: dict | None = None,
+) -> None:
+    payload = {"admin_tg_user_id": admin_info.get("tg_user_id")}
+    if metadata:
+        payload.update(metadata)
+    await log_audit_event(
+        session,
+        actor_type="admin",
+        actor_user_id=None,
+        actor_admin_id=None,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        metadata_json=payload,
+    )
 
 
 class TitleCreate(BaseModel):
@@ -131,6 +156,10 @@ class PremiumRevokeRequest(BaseModel):
     reason: str
 
 
+class UserBanRequest(BaseModel):
+    reason: str = Field(..., min_length=1, max_length=255)
+
+
 def _expected_filename(title_id: int, episode_id: int | None, audio_id: int, quality_id: int) -> str:
     if episode_id is None:
         return f"title_{title_id}__a_{audio_id}__q_{quality_id}.mp4"
@@ -203,7 +232,7 @@ async def list_titles(
 @router.post("/titles", status_code=status.HTTP_201_CREATED)
 async def create_title(
     payload: TitleCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     title = Title(
@@ -217,6 +246,15 @@ async def create_title(
     if payload.is_published is not None:
         title.is_published = payload.is_published
     session.add(title)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="title_created",
+        entity_type="title",
+        entity_id=title.id,
+        metadata={"name": title.name},
+    )
     await session.commit()
     await session.refresh(title)
     return {"id": title.id}
@@ -283,7 +321,7 @@ async def get_title(
 async def update_title(
     title_id: int,
     payload: TitleUpdate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     title = await session.get(Title, title_id)
@@ -292,6 +330,14 @@ async def update_title(
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(title, key, value)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="title_updated",
+        entity_type="title",
+        entity_id=title.id,
+        metadata={"fields": list(update_data.keys())},
+    )
     await session.commit()
     await session.refresh(title)
     return {"id": title.id}
@@ -301,7 +347,7 @@ async def update_title(
 async def create_season(
     title_id: int,
     payload: SeasonCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     title = await session.get(Title, title_id)
@@ -309,6 +355,15 @@ async def create_season(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
     season = Season(title_id=title_id, season_number=payload.season_number, name=payload.name)
     session.add(season)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="season_created",
+        entity_type="season",
+        entity_id=season.id,
+        metadata={"title_id": title_id, "season_number": payload.season_number},
+    )
     await session.commit()
     await session.refresh(season)
     return {"id": season.id}
@@ -318,7 +373,7 @@ async def create_season(
 async def create_episode(
     season_id: int,
     payload: EpisodeCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     season = await session.get(Season, season_id)
@@ -333,6 +388,15 @@ async def create_episode(
         air_date=payload.air_date,
     )
     session.add(episode)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="episode_created",
+        entity_type="episode",
+        entity_id=episode.id,
+        metadata={"title_id": season.title_id, "season_id": season_id},
+    )
     await session.commit()
     await session.refresh(episode)
     return {"id": episode.id}
@@ -342,7 +406,7 @@ async def create_episode(
 async def update_episode(
     episode_id: int,
     payload: EpisodeUpdate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     episode = await session.get(Episode, episode_id)
@@ -351,6 +415,14 @@ async def update_episode(
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(episode, key, value)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="episode_updated",
+        entity_type="episode",
+        entity_id=episode.id,
+        metadata={"fields": list(update_data.keys())},
+    )
     await session.commit()
     await session.refresh(episode)
     return {"id": episode.id}
@@ -359,13 +431,21 @@ async def update_episode(
 @router.post("/episodes/{episode_id}/publish")
 async def publish_episode(
     episode_id: int,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     episode = await session.get(Episode, episode_id)
     if not episode:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
     episode.published_at = datetime.now(timezone.utc)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="episode_published",
+        entity_type="episode",
+        entity_id=episode.id,
+        metadata={"published_at": episode.published_at.isoformat()},
+    )
     await session.commit()
     await session.refresh(episode)
     return {"id": episode.id, "published_at": episode.published_at}
@@ -403,11 +483,20 @@ async def list_audio_tracks(
 @router.post("/audio_tracks", status_code=status.HTTP_201_CREATED)
 async def create_audio_track(
     payload: AudioTrackCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     track = AudioTrack(name=payload.name, code=payload.code, is_active=payload.is_active)
     session.add(track)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="audio_track_created",
+        entity_type="audio_track",
+        entity_id=track.id,
+        metadata={"code": track.code},
+    )
     await session.commit()
     await session.refresh(track)
     return {"id": track.id}
@@ -417,7 +506,7 @@ async def create_audio_track(
 async def update_audio_track(
     track_id: int,
     payload: AudioTrackUpdate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     track = await session.get(AudioTrack, track_id)
@@ -426,6 +515,14 @@ async def update_audio_track(
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(track, key, value)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="audio_track_updated",
+        entity_type="audio_track",
+        entity_id=track.id,
+        metadata={"fields": list(update_data.keys())},
+    )
     await session.commit()
     await session.refresh(track)
     return {"id": track.id}
@@ -463,11 +560,20 @@ async def list_qualities(
 @router.post("/qualities", status_code=status.HTTP_201_CREATED)
 async def create_quality(
     payload: QualityCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     quality = Quality(name=payload.name, height=payload.height, is_active=payload.is_active)
     session.add(quality)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="quality_created",
+        entity_type="quality",
+        entity_id=quality.id,
+        metadata={"height": quality.height},
+    )
     await session.commit()
     await session.refresh(quality)
     return {"id": quality.id}
@@ -477,7 +583,7 @@ async def create_quality(
 async def update_quality(
     quality_id: int,
     payload: QualityUpdate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     quality = await session.get(Quality, quality_id)
@@ -486,6 +592,14 @@ async def update_quality(
     update_data = payload.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(quality, key, value)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="quality_updated",
+        entity_type="quality",
+        entity_id=quality.id,
+        metadata={"fields": list(update_data.keys())},
+    )
     await session.commit()
     await session.refresh(quality)
     return {"id": quality.id}
@@ -494,7 +608,7 @@ async def update_quality(
 @router.post("/variants", status_code=status.HTTP_201_CREATED)
 async def create_variant(
     payload: VariantCreate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     title = await session.get(Title, payload.title_id)
@@ -521,6 +635,19 @@ async def create_variant(
         checksum_sha256=payload.checksum_sha256,
     )
     session.add(variant)
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="variant_created",
+        entity_type="media_variant",
+        entity_id=variant.id,
+        metadata={
+            "title_id": variant.title_id,
+            "episode_id": variant.episode_id,
+            "status": variant.status,
+        },
+    )
     await session.commit()
     await session.refresh(variant)
     return _serialize_variant(variant)
@@ -530,7 +657,7 @@ async def create_variant(
 async def update_variant(
     variant_id: int,
     payload: VariantUpdate,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     variant = await session.get(MediaVariant, variant_id)
@@ -549,6 +676,14 @@ async def update_variant(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch")
     for key, value in update_data.items():
         setattr(variant, key, value)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="variant_updated",
+        entity_type="media_variant",
+        entity_id=variant.id,
+        metadata={"fields": list(update_data.keys())},
+    )
     await session.commit()
     await session.refresh(variant)
     return _serialize_variant(variant)
@@ -625,7 +760,7 @@ async def list_upload_jobs(
 @router.post("/upload_jobs/{job_id}/retry")
 async def retry_upload_job(
     job_id: int,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     job = await session.get(UploadJob, job_id)
@@ -638,14 +773,33 @@ async def retry_upload_job(
     if variant:
         variant.status = "uploading"
         variant.error = None
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="upload_job_retry",
+        entity_type="upload_job",
+        entity_id=job.id,
+        metadata={"variant_id": job.variant_id},
+    )
     await session.commit()
     return {"job_id": job.id, "status": job.status}
 
 
 @router.post("/upload_jobs/rescan")
-async def rescan_upload_jobs(_: dict = Depends(get_admin_token)) -> dict:
+async def rescan_upload_jobs(
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
     redis = get_redis()
     await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="upload_jobs_rescan",
+        entity_type="upload_job",
+        entity_id=None,
+    )
+    await session.commit()
     return {"queued": True}
 
 
@@ -677,6 +831,8 @@ async def list_users(
                 "username": user.username,
                 "first_name": user.first_name,
                 "premium_until": premium_until,
+                "is_banned": user.is_banned,
+                "ban_reason": user.ban_reason,
                 "created_at": user.created_at,
             }
             for user, premium_until in rows
@@ -687,11 +843,57 @@ async def list_users(
     }
 
 
+@router.post("/users/{user_id}/ban")
+async def ban_user(
+    user_id: int,
+    payload: UserBanRequest,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    user.is_banned = True
+    user.ban_reason = payload.reason
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="user_ban",
+        entity_type="user",
+        entity_id=user.id,
+        metadata={"reason": payload.reason},
+    )
+    await session.commit()
+    return {"user_id": user.id, "is_banned": user.is_banned, "ban_reason": user.ban_reason}
+
+
+@router.post("/users/{user_id}/unban")
+async def unban_user(
+    user_id: int,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+    user.is_banned = False
+    user.ban_reason = None
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="user_unban",
+        entity_type="user",
+        entity_id=user.id,
+    )
+    await session.commit()
+    return {"user_id": user.id, "is_banned": user.is_banned}
+
+
 @router.post("/users/{user_id}/premium/grant")
 async def grant_premium(
     user_id: int,
     payload: PremiumGrantRequest,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     user = await session.get(User, user_id)
@@ -703,6 +905,15 @@ async def grant_premium(
         payload.days,
         payload.reason,
     )
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="premium_granted",
+        entity_type="user_premium",
+        entity_id=user_id,
+        metadata={"days": payload.days, "reason": payload.reason},
+    )
+    await session.commit()
     logger.info(
         "Admin premium grant: user_id=%s days=%s reason=%s",
         user_id,
@@ -716,7 +927,7 @@ async def grant_premium(
 async def revoke_premium(
     user_id: int,
     payload: PremiumRevokeRequest,
-    _: dict = Depends(get_admin_token),
+    admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     user = await session.get(User, user_id)
@@ -729,6 +940,14 @@ async def revoke_premium(
     else:
         premium = UserPremium(user_id=user_id, premium_until=now)
         session.add(premium)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="premium_revoked",
+        entity_type="user_premium",
+        entity_id=user_id,
+        metadata={"reason": payload.reason},
+    )
     await session.commit()
     logger.info("Admin premium revoke: user_id=%s reason=%s", user_id, payload.reason)
     return {"user_id": user_id, "premium_until": premium.premium_until}

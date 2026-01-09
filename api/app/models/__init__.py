@@ -1,5 +1,6 @@
 from app.models.models import (
     Admin,
+    AuditEvent,
     AudioTrack,
     Episode,
     Favorite,
@@ -23,6 +24,7 @@ from app.models.models import (
 
 __all__ = [
     "Admin",
+    "AuditEvent",
     "AudioTrack",
     "Episode",
     "Favorite",

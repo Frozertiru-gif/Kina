@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import get_db_session
+from app.dependencies import CurrentUser, get_current_user, get_db_session
 from app.models import Title, TitleType, ViewEvent
+from app.services.rate_limit import check_rate_limit, rate_limit_response, register_violation
 
 router = APIRouter()
 
@@ -80,8 +81,14 @@ async def catalog_search(
     type: TitleType | None = Query(default=None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[dict]:
+    rate_key = f"ratelimit:catalog_search:{user.tg_user_id}"
+    result = await check_rate_limit(rate_key, 10, 10)
+    if not result.allowed:
+        await register_violation(session, user.tg_user_id)
+        return rate_limit_response(result.retry_after)
     query = select(Title).where(Title.is_published.is_(True))
     if q:
         pattern = f"%{q}%"

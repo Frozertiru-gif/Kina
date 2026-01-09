@@ -6,9 +6,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import CurrentUser, get_current_user
+from app.dependencies import CurrentUser, get_current_user, get_db_session
 from app.redis import get_redis, json_set, setnx_with_ttl
+from app.services.rate_limit import check_rate_limit, rate_limit_response, register_violation
 
 router = APIRouter()
 
@@ -29,7 +31,13 @@ def _get_ads_env_int(name: str, default: int) -> int:
 async def ads_start(
     payload: AdsStartRequest,
     user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    rate_key = f"ratelimit:ads_start:{user.tg_user_id}"
+    result = await check_rate_limit(rate_key, 5, 60)
+    if not result.allowed:
+        await register_violation(session, user.tg_user_id)
+        return rate_limit_response(result.retry_after)
     cooldown_ttl = _get_ads_env_int("ADS_COOLDOWN_SECONDS", 90)
     nonce_ttl = _get_ads_env_int("ADS_NONCE_TTL_SECONDS", 300)
     cooldown_key = f"ad_cd:{user.tg_user_id}"
@@ -38,6 +46,7 @@ async def ads_start(
         redis = get_redis()
         retry_after = await redis.ttl(cooldown_key)
         retry_after = retry_after if retry_after and retry_after > 0 else cooldown_ttl
+        await register_violation(session, user.tg_user_id)
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content={"error": "ad_cooldown", "retry_after": retry_after},
@@ -58,7 +67,13 @@ async def ads_start(
 async def ads_complete(
     payload: AdsCompleteRequest,
     user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    rate_key = f"ratelimit:ads_complete:{user.tg_user_id}"
+    result = await check_rate_limit(rate_key, 10, 60)
+    if not result.allowed:
+        await register_violation(session, user.tg_user_id)
+        return rate_limit_response(result.retry_after)
     redis = get_redis()
     nonce_key = f"ad_nonce:{payload.nonce}"
     raw_payload = await redis.get(nonce_key)

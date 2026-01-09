@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import CurrentUser, get_current_user, get_db_session, is_premium_active
 from app.models import MediaVariant
 from app.redis import get_redis, json_set, setnx_with_ttl
+from app.services.rate_limit import check_rate_limit, rate_limit_response, register_violation
 
 router = APIRouter()
 
@@ -33,10 +34,16 @@ async def watch_request(
     throttle_key = f"watchreq:{user.tg_user_id}"
     allowed = await setnx_with_ttl(throttle_key, 2)
     if not allowed:
+        await register_violation(session, user.tg_user_id)
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content={"error": "too_many_requests"},
         )
+    rate_key = f"ratelimit:watch_request:{user.tg_user_id}"
+    result = await check_rate_limit(rate_key, 20, 60)
+    if not result.allowed:
+        await register_violation(session, user.tg_user_id)
+        return rate_limit_response(result.retry_after)
 
     variant_query = select(MediaVariant).where(
         MediaVariant.audio_id == payload.audio_id,

@@ -16,6 +16,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -329,3 +330,19 @@ class Admin(Base):
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    actor_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    actor_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    entity_id: Mapped[int | None] = mapped_column(Integer)
+    metadata_json: Mapped[dict | None] = mapped_column(JSONB)
