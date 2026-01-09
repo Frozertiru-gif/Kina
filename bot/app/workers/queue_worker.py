@@ -6,6 +6,7 @@ from aiogram import Bot
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app import keyboards
 from app.services.media_sender import send_video_by_variant, send_watch_card
 from app.settings import Settings
 
@@ -92,4 +93,9 @@ async def _handle_send_video(bot: Bot, session: AsyncSession, payload: dict) -> 
 async def _handle_notify(bot: Bot, payload: dict) -> None:
     tg_user_id = payload["tg_user_id"]
     text = payload.get("text") or "У вас новое уведомление."
-    await bot.send_message(chat_id=tg_user_id, text=text)
+    title_id = payload.get("title_id")
+    episode_id = payload.get("episode_id")
+    keyboard = None
+    if title_id is not None and episode_id is not None:
+        keyboard = keyboards.notification_keyboard(int(title_id), int(episode_id))
+    await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=keyboard)

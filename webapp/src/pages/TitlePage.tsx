@@ -149,9 +149,11 @@ export const TitlePage = () => {
             <button className="icon-button" onClick={() => toggleFavorite(title.id)}>
               {favoriteIds.has(title.id) ? "⭐" : "☆"} Избранное
             </button>
-            <button className="icon-button" onClick={() => toggleSubscription(title.id)}>
-              {subscriptions.has(title.id) ? "🔔" : "🔕"} Подписка
-            </button>
+            {title.type === "series" && (
+              <button className="icon-button" onClick={() => toggleSubscription(title.id)}>
+                {subscriptions.has(title.id) ? "🔔" : "🔕"} Подписка
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import enum
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,7 +11,18 @@ from pathlib import Path
 import httpx
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func, select
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
+    select,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -59,6 +71,37 @@ class MediaVariant(Base):
     duration_sec: Mapped[int | None] = mapped_column(Integer)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
     checksum_sha256: Mapped[str | None] = mapped_column(String(64))
+
+
+class TitleType(enum.Enum):
+    MOVIE = "movie"
+    SERIES = "series"
+
+
+class Title(Base):
+    __tablename__ = "titles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    type: Mapped[TitleType] = mapped_column(Enum(TitleType, name="title_type"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
+class Season(Base):
+    __tablename__ = "seasons"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title_id: Mapped[int] = mapped_column(Integer)
+    season_number: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class Episode(Base):
+    __tablename__ = "episodes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title_id: Mapped[int] = mapped_column(Integer)
+    season_id: Mapped[int] = mapped_column(Integer)
+    episode_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class UploadJob(Base):
@@ -629,11 +672,25 @@ async def notify_subscribers_if_needed(
 ) -> None:
     if variant.episode_id is None:
         return
+    episode_result = await session.execute(
+        select(Episode, Season, Title)
+        .join(Season, Episode.season_id == Season.id)
+        .join(Title, Episode.title_id == Title.id)
+        .where(Episode.id == variant.episode_id)
+    )
+    row = episode_result.first()
+    if not row:
+        return
+    episode, season, title = row
+    if not episode.published_at:
+        return
+    if title.type != TitleType.SERIES:
+        return
     result = await session.execute(
         select(User.tg_user_id)
         .join(Subscription, Subscription.user_id == User.id)
         .where(
-            Subscription.title_id == variant.title_id,
+            Subscription.title_id == title.id,
             Subscription.enabled.is_(True),
         )
     )
@@ -641,14 +698,42 @@ async def notify_subscribers_if_needed(
     if not tg_user_ids:
         return
 
+    text = (
+        "Новая серия вышла: "
+        f"{title.name} — S{season.season_number}E{episode.episode_number}. Открыть?"
+    )
+    enqueued = 0
+    deduped = 0
     for tg_user_id in tg_user_ids:
+        dedupe_key = f"notif:{tg_user_id}:{episode.id}"
+        dedupe_set = await redis.set(dedupe_key, "1", nx=True, ex=60 * 60 * 24 * 7)
+        if not dedupe_set:
+            deduped += 1
+            continue
         payload = {
             "tg_user_id": tg_user_id,
-            "title_id": variant.title_id,
-            "episode_id": variant.episode_id,
-            "text": "Новый эпизод доступен",
+            "title_id": title.id,
+            "episode_id": episode.id,
+            "text": text,
+            "variant_id": variant.id,
         }
         await redis.rpush("notify_queue", json.dumps(payload, ensure_ascii=False))
+        enqueued += 1
+
+    await _log_audit_event(
+        session,
+        action="notification_enqueued",
+        entity_type="episode",
+        entity_id=episode.id,
+        metadata={
+            "title_id": title.id,
+            "variant_id": variant.id,
+            "total_subscribers": len(tg_user_ids),
+            "enqueued": enqueued,
+            "deduped": deduped,
+        },
+    )
+    await session.commit()
 
 
 def parse_variant_filename(filename: str) -> ParsedVariant | None:

@@ -88,7 +88,15 @@ docker compose up --build bot
 - `send_watch_card_queue` → `{tg_user_id, variant_id, title_id, episode_id, mode}`
 - `send_video_queue` → `{tg_user_id, variant_id}`
 - `send_video_vip_queue` → `{tg_user_id, variant_id}`
-- `notify_queue` → `{tg_user_id, title_id, episode_id, text}`
+- `notify_queue` → `{tg_user_id, title_id, episode_id, text, variant_id}`
+
+### Subscriptions & notifications
+- Subscribe to series:
+  - WebApp: tap the 🔔 button on a series title page.
+  - Bot: tap 🔔 on a series card.
+- Notifications are sent when an episode variant becomes `ready` **and** the episode has
+  `published_at` set. This lets admins preload uploads before publishing.
+- Deduplication key (Redis): `notif:{tg_user_id}:{episode_id}` (TTL 7 days).
 
 ## API v1 (DEV auth bypass)
 Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or header).
@@ -113,6 +121,7 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - POST /api/internal/bot/send_watch_card
 - POST /api/internal/bot/send_video
 - POST /api/internal/bot/send_notification
+- POST /api/internal/user/subscription_toggle
 - POST /api/internal/uploader/retry_job
 - GET  /api/internal/uploader/jobs
 - POST /api/internal/uploader/rescan

@@ -14,6 +14,14 @@ def reopen_hide_keyboard(title_id: int, episode_id: int | None) -> InlineKeyboar
     return builder.as_markup()
 
 
+def notification_keyboard(title_id: int, episode_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Открыть", callback_data=f"reopen:{title_id}:{episode_id}")
+    builder.button(text="Скрыть", callback_data="hide")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 def refresh_keyboard(variant_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Обновить", callback_data=f"refresh:{variant_id}")
