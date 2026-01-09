@@ -12,6 +12,7 @@ from app.db import (
     fetch_premium_until,
     fetch_title,
     fetch_variant,
+    set_user_preferences,
 )
 from app.services.message_state import demote_previous_message, mark_active_message
 
@@ -116,6 +117,14 @@ async def send_video_by_variant(
         video=variant.telegram_file_id,
         caption=build_card_text(title, episode, variant, premium_until),
         reply_markup=keyboard,
+    )
+    await set_user_preferences(
+        session,
+        tg_user_id=tg_user_id,
+        preferred_audio_id=variant.audio_id,
+        preferred_quality_id=variant.quality_id,
+        last_title_id=variant.title_id,
+        last_episode_id=variant.episode_id,
     )
     await mark_active_message(
         session,

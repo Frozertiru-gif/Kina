@@ -162,6 +162,42 @@ async def set_active_message(
     await session.commit()
 
 
+async def set_user_preferences(
+    session: AsyncSession,
+    tg_user_id: int,
+    *,
+    preferred_audio_id: int | None,
+    preferred_quality_id: int | None,
+    last_title_id: int | None,
+    last_episode_id: int | None,
+) -> None:
+    user_id = await get_or_create_user_id(session, tg_user_id)
+    await session.execute(
+        text(
+            """
+            INSERT INTO user_state (
+                user_id, preferred_audio_id, preferred_quality_id, last_title_id, last_episode_id
+            )
+            VALUES (:user_id, :preferred_audio_id, :preferred_quality_id, :last_title_id, :last_episode_id)
+            ON CONFLICT (user_id) DO UPDATE SET
+                preferred_audio_id = EXCLUDED.preferred_audio_id,
+                preferred_quality_id = EXCLUDED.preferred_quality_id,
+                last_title_id = EXCLUDED.last_title_id,
+                last_episode_id = EXCLUDED.last_episode_id,
+                updated_at = now()
+            """
+        ),
+        {
+            "user_id": user_id,
+            "preferred_audio_id": preferred_audio_id,
+            "preferred_quality_id": preferred_quality_id,
+            "last_title_id": last_title_id,
+            "last_episode_id": last_episode_id,
+        },
+    )
+    await session.commit()
+
+
 async def fetch_title(session: AsyncSession, title_id: int) -> TitleInfo | None:
     result = await session.execute(
         text("SELECT id, name, type FROM titles WHERE id = :title_id"),

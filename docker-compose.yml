@@ -21,6 +21,7 @@ services:
     ports:
       - "8000:8000"
     depends_on:
+      - migrations
       - postgres
       - redis
     healthcheck:
@@ -58,6 +59,13 @@ services:
       - ./infra/admin:/usr/share/nginx/admin:ro
     depends_on:
       - api
+
+  migrations:
+    build: ./api
+    env_file: .env
+    depends_on:
+      - postgres
+    command: ["alembic", "upgrade", "head"]
 
 volumes:
   postgres_data:

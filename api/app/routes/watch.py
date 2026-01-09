@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import CurrentUser, get_current_user, get_db_session, is_premium_active
-from app.models import MediaVariant, UserState
+from app.models import MediaVariant
 from app.redis import get_redis, json_set, setnx_with_ttl
 from app.services.rate_limit import check_rate_limit, rate_limit_response, register_violation
 from app.services.watch_resolver import ResolveVariantError, resolve_watch_variant
@@ -103,15 +103,6 @@ async def watch_request(
         )
 
     variant_id = variant.id
-    state = await session.get(UserState, user.id)
-    if state is None:
-        state = UserState(user_id=user.id)
-        session.add(state)
-    state.preferred_audio_id = payload.audio_id
-    state.preferred_quality_id = payload.quality_id
-    state.last_title_id = payload.title_id
-    state.last_episode_id = payload.episode_id
-    await session.commit()
 
     premium_active = is_premium_active(user.premium_until)
     mode = "direct" if premium_active else "ad_gate"
@@ -174,7 +165,18 @@ async def watch_dispatch(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     redis = get_redis()
-    queue = "send_video_vip_queue" if is_premium_active(user.premium_until) else "send_video_queue"
+    premium_active = is_premium_active(user.premium_until)
+    if not premium_active:
+        pass_key = f"ad_pass:{user.tg_user_id}:{payload.variant_id}"
+        if not await redis.exists(pass_key):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "ad_required"},
+            )
+    dedupe_key = f"vsend:{user.tg_user_id}:{payload.variant_id}"
+    if not await setnx_with_ttl(dedupe_key, 120):
+        return {"queued": False, "deduped": True}
+    queue = "send_video_vip_queue" if premium_active else "send_video_queue"
     payload_data = {"tg_user_id": user.tg_user_id, "variant_id": payload.variant_id}
     await redis.rpush(queue, json.dumps(payload_data, ensure_ascii=False))
     return {"queued": True}
