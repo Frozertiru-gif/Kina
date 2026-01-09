@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import CurrentUser, get_current_user, get_db_session, is_premium_active
 from app.models import MediaVariant
-from app.redis import json_set, setnx_with_ttl
+from app.redis import get_redis, json_set, setnx_with_ttl
 
 router = APIRouter()
 
@@ -75,7 +75,13 @@ async def watch_request(
             },
         )
 
-    mode = "direct" if is_premium_active(user.premium_until) else "ad_gate"
+    premium_active = is_premium_active(user.premium_until)
+    mode = "direct" if premium_active else "ad_gate"
+    if not premium_active:
+        redis = get_redis()
+        pass_key = f"ad_pass:{user.tg_user_id}:{variant.id}"
+        if await redis.exists(pass_key):
+            mode = "direct"
     watchctx_key = f"watchctx:{user.tg_user_id}"
     watch_ctx = {
         "variant_id": variant.id,
