@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -16,6 +18,10 @@ class WatchRequest(BaseModel):
     episode_id: int | None = None
     audio_id: int
     quality_id: int
+
+
+class WatchDispatchRequest(BaseModel):
+    variant_id: int
 
 
 @router.post("/watch/request")
@@ -96,3 +102,15 @@ async def watch_request(
         "title_id": payload.title_id,
         "episode_id": payload.episode_id,
     }
+
+
+@router.post("/watch/dispatch")
+async def watch_dispatch(
+    payload: WatchDispatchRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    redis = get_redis()
+    queue = "send_video_vip_queue" if is_premium_active(user.premium_until) else "send_video_queue"
+    payload_data = {"tg_user_id": user.tg_user_id, "variant_id": payload.variant_id}
+    await redis.rpush(queue, json.dumps(payload_data, ensure_ascii=False))
+    return {"queued": True}

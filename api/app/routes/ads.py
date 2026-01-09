@@ -35,9 +35,12 @@ async def ads_start(
     cooldown_key = f"ad_cd:{user.tg_user_id}"
     allowed = await setnx_with_ttl(cooldown_key, cooldown_ttl)
     if not allowed:
+        redis = get_redis()
+        retry_after = await redis.ttl(cooldown_key)
+        retry_after = retry_after if retry_after and retry_after > 0 else cooldown_ttl
         return JSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "ad_cooldown"},
+            content={"error": "ad_cooldown", "retry_after": retry_after},
         )
 
     nonce = secrets.token_urlsafe(32)

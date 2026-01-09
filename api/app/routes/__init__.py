@@ -1,4 +1,4 @@
-from . import ads, auth, catalog, favorites, health, internal, titles, watch
+from . import ads, auth, catalog, favorites, health, internal, subscriptions, titles, watch
 
 __all__ = [
     "ads",
@@ -7,6 +7,7 @@ __all__ = [
     "favorites",
     "health",
     "internal",
+    "subscriptions",
     "titles",
     "watch",
 ]

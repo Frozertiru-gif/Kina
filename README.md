@@ -65,7 +65,10 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - GET  /api/title/{title_id}/episodes
 - GET  /api/favorites
 - POST /api/favorites/toggle
+- GET  /api/subscriptions
+- POST /api/subscriptions/toggle
 - POST /api/watch/request
+- POST /api/watch/dispatch
 - POST /api/ads/start
 - POST /api/ads/complete
 - GET  /api/ads/status
@@ -129,6 +132,23 @@ curl -X POST http://localhost/api/watch/request \\
   -H 'Content-Type: application/json' \\
   -H 'X-Dev-User-Id: 123456' \\
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
+
+curl -X POST http://localhost/api/watch/dispatch \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Dev-User-Id: 123456' \\
+  -d '{"variant_id":1}'
+```
+
+## WebApp dev
+```bash
+cd webapp
+npm install
+npm run dev
+```
+
+### WebApp prod
+```bash
+docker compose up --build
 ```
 
 ## Notes
