@@ -32,6 +32,43 @@ Production-grade mono-repo skeleton for API, Telegram bot, uploader service, and
 - http://localhost/admin/ (admin)
 - http://localhost/api/health (api)
 
+## Admin UI + API
+- Open admin UI: http://localhost/admin/
+- Admin API base: http://localhost/api/admin
+
+Build admin static assets for Nginx:
+```bash
+cd admin
+npm install
+npm run build
+```
+
+### Admin auth
+Set the following env vars:
+- `ADMIN_SERVICE_TOKEN` (token for `X-Admin-Token`, falls back to `SERVICE_TOKEN` if unset)
+- `ADMIN_ALLOWLIST` (optional CSV of Telegram user IDs allowed to use admin endpoints)
+
+If `ADMIN_ALLOWLIST` is set, add header `X-Admin-User-Id` with a value from the allowlist.
+
+### Admin API curl examples
+```bash
+curl -X GET http://localhost/api/admin/titles?limit=5 \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
+
+curl -X POST http://localhost/api/admin/titles \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"type":"movie","name":"Demo Movie","year":2024}'
+
+curl -X POST http://localhost/api/admin/variants \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"title_id":1,"audio_id":1,"quality_id":1,"status":"pending"}'
+
+curl -X GET http://localhost/api/admin/upload_jobs?status=failed \\
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
+```
+
 ## Telegram Bot
 The bot reads Redis queues and sends cards/videos to users. It does not search titles in chat.
 
@@ -186,7 +223,7 @@ storage chat, and writes `file_id` + message details into the DB.
 
 ### Naming convention
 - Movie: `title_<title_id>__a_<audio_id>__q_<quality_id>.mp4`
-- Episode: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mkv`
+- Episode: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mp4`
 
 Examples:
 - `title_12__a_1__q_2.mp4`

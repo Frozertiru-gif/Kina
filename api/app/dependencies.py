@@ -166,3 +166,51 @@ def get_service_token(
     expected = os.getenv("SERVICE_TOKEN")
     if not expected or x_service_token != expected:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_service_token")
+
+
+def _parse_admin_allowlist(raw: str | None) -> set[int]:
+    if not raw:
+        return set()
+    ids: set[int] = set()
+    for item in raw.split(","):
+        value = item.strip()
+        if not value:
+            continue
+        try:
+            ids.add(int(value))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="invalid_admin_allowlist",
+            ) from exc
+    return ids
+
+
+def get_admin_token(
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    x_admin_user_id: str | None = Header(default=None, alias="X-Admin-User-Id"),
+) -> dict:
+    expected = os.getenv("ADMIN_SERVICE_TOKEN") or os.getenv("SERVICE_TOKEN")
+    if not expected or x_admin_token != expected:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_admin_token")
+    allowlist = _parse_admin_allowlist(os.getenv("ADMIN_ALLOWLIST"))
+    if allowlist:
+        if not x_admin_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="admin_user_id_required",
+            )
+        try:
+            admin_id = int(x_admin_user_id)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="admin_user_id_invalid",
+            ) from exc
+        if admin_id not in allowlist:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="admin_user_not_allowed",
+            )
+        return {"tg_user_id": admin_id}
+    return {"tg_user_id": None}
