@@ -113,6 +113,7 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - GET  /api/subscriptions
 - POST /api/subscriptions/toggle
 - POST /api/watch/request
+- POST /api/watch/resolve
 - POST /api/watch/dispatch
 - POST /api/ads/start
 - POST /api/ads/complete
@@ -141,6 +142,14 @@ curl -X POST http://localhost/api/watch/request \\
   -H 'Content-Type: application/json' \\
   -H 'X-Init-Data: <telegram_init_data>' \\
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
+```
+
+### Watch resolve (best variant)
+```bash
+curl -X POST http://localhost/api/watch/resolve \\
+  -H 'Content-Type: application/json' \\
+  -H 'X-Init-Data: <telegram_init_data>' \\
+  -d '{"title_id":1,"episode_id":null,"audio_id":null,"quality_id":null}'
 ```
 
 ### Watch request (variant not found)
@@ -198,6 +207,17 @@ curl -X POST http://localhost/api/watch/dispatch \\
 | Referrer | `POST /api/referral/apply` | 10 requests / 24 hours per referrer |
 | Admin token | `/api/admin/*` | 60 requests / 60 seconds |
 | Service token | `/api/internal/*` | 120 requests / 60 seconds |
+
+## Watch preferences & defaults
+- Stored in `user_state`: `preferred_audio_id`, `preferred_quality_id`, `last_title_id`, `last_episode_id`.
+- The `/api/watch/resolve` endpoint fills missing audio/quality from stored preferences.
+- If still missing, defaults are selected deterministically:
+  - Audio: lowest `audio_id` among active tracks available for the title/episode.
+  - Quality: highest `height` among active qualities available for the title/episode.
+
+## Bot episode navigation
+- Prev/next picks the adjacent episode by `episode_number` within a season.
+- When at the season edge, it moves across seasons (last episode of previous season or first of next).
 
 ## Admin user moderation
 Ban/unban users:

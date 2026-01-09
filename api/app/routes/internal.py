@@ -16,6 +16,7 @@ from app.models import (
     UploadJob,
     User,
     UserPremium,
+    UserState,
 )
 from app.redis import get_redis, json_set, setnx_with_ttl
 from app.services.rate_limit import rate_limit_response, register_violation
@@ -25,6 +26,7 @@ from app.services.referrals import (
     ensure_referral_code,
     get_referral_reward_days,
 )
+from app.services.watch_resolver import ResolveVariantError, resolve_watch_variant
 
 router = APIRouter()
 
@@ -66,6 +68,14 @@ class WatchRequest(BaseModel):
     episode_id: int | None = None
     audio_id: int
     quality_id: int
+
+
+class WatchResolveRequest(BaseModel):
+    tg_user_id: int
+    title_id: int
+    episode_id: int | None = None
+    audio_id: int | None = None
+    quality_id: int | None = None
 
 
 class RetryUploadJobRequest(BaseModel):
@@ -140,6 +150,7 @@ async def toggle_favorite_internal(
     _: None = Depends(get_service_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
+    variant_id = variant.id
     user = await _get_or_create_user(session, payload.tg_user_id)
     result = await session.execute(
         select(Favorite).where(
@@ -209,6 +220,17 @@ async def watch_request_internal(
     if not variant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
 
+    user = await _get_or_create_user(session, payload.tg_user_id)
+    state = await session.get(UserState, user.id)
+    if state is None:
+        state = UserState(user_id=user.id)
+        session.add(state)
+    state.preferred_audio_id = payload.audio_id
+    state.preferred_quality_id = payload.quality_id
+    state.last_title_id = payload.title_id
+    state.last_episode_id = payload.episode_id
+    await session.commit()
+
     premium_until = await _get_premium_until(session, payload.tg_user_id)
     premium_active = is_premium_active(premium_until)
     mode = "direct" if premium_active else "ad_gate"
@@ -227,9 +249,42 @@ async def watch_request_internal(
 
     return {
         "mode": mode,
-        "variant_id": variant.id,
+        "variant_id": variant_id,
         "title_id": payload.title_id,
         "episode_id": payload.episode_id,
+    }
+
+
+@router.post("/internal/bot/watch/resolve")
+async def watch_resolve_internal(
+    payload: WatchResolveRequest,
+    _: None = Depends(get_service_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> dict:
+    user = await _get_or_create_user(session, payload.tg_user_id)
+    try:
+        result = await resolve_watch_variant(
+            session,
+            user_id=user.id,
+            title_id=payload.title_id,
+            episode_id=payload.episode_id,
+            audio_id=payload.audio_id,
+            quality_id=payload.quality_id,
+        )
+    except ResolveVariantError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": "variant_not_found",
+                "available_audio_ids": exc.payload.available_audio_ids,
+                "available_quality_ids": exc.payload.available_quality_ids,
+                "available_variants": exc.payload.available_variants,
+            },
+        ) from exc
+    return {
+        "variant_id": result.variant_id,
+        "audio_id": result.audio_id,
+        "quality_id": result.quality_id,
     }
 
 

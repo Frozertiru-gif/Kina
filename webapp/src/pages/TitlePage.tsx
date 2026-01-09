@@ -1,10 +1,36 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import type { Episode, TitleDetail, WatchRequestPayload } from "../api/types";
 import { WatchStatus } from "../components/WatchStatus";
 import { useUserData } from "../state/userData";
 import { useWatchFlow } from "../state/watchFlow";
+
+const AUDIO_STORAGE_KEY = "kina:preferred_audio_id";
+const QUALITY_STORAGE_KEY = "kina:preferred_quality_id";
+
+const readStoredNumber = (key: string) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = window.localStorage.getItem(key);
+  if (!raw) {
+    return null;
+  }
+  const parsed = Number(raw);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const persistNumber = (key: string, value: number | null) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (value === null) {
+    window.localStorage.removeItem(key);
+    return;
+  }
+  window.localStorage.setItem(key, String(value));
+};
 
 export const TitlePage = () => {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +42,13 @@ export const TitlePage = () => {
   const [selectedEpisodeId, setSelectedEpisodeId] = useState<number | null>(null);
   const [audioId, setAudioId] = useState<number | null>(null);
   const [qualityId, setQualityId] = useState<number | null>(null);
+  const [resolveStatus, setResolveStatus] = useState<"available" | "unavailable" | null>(
+    null,
+  );
+  const [resolvedSelection, setResolvedSelection] = useState<{
+    audioId: number;
+    qualityId: number;
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,8 +62,10 @@ export const TitlePage = () => {
       try {
         const data = await api.getTitle(titleId);
         setTitle(data);
-        setAudioId(data.available_audio_ids[0] ?? null);
-        setQualityId(data.available_quality_ids[0] ?? null);
+        const storedAudio = readStoredNumber(AUDIO_STORAGE_KEY);
+        const storedQuality = readStoredNumber(QUALITY_STORAGE_KEY);
+        setAudioId(storedAudio ?? data.available_audio_ids[0] ?? null);
+        setQualityId(storedQuality ?? data.available_quality_ids[0] ?? null);
         if (data.type === "series" && data.seasons.length) {
           setSelectedSeason(data.seasons[0].season_number);
         }
@@ -48,6 +83,36 @@ export const TitlePage = () => {
     loadTitle();
   }, [titleId]);
 
+  const resolveSelection = async (nextAudioId: number | null, nextQualityId: number | null) => {
+    if (!title) {
+      return;
+    }
+    if (title.type === "series" && !selectedEpisodeId) {
+      return;
+    }
+    try {
+      const response = await api.watchResolve({
+        title_id: title.id,
+        episode_id: title.type === "series" ? selectedEpisodeId : null,
+        audio_id: nextAudioId,
+        quality_id: nextQualityId,
+      });
+      setResolveStatus("available");
+      setResolvedSelection({ audioId: response.audio_id, qualityId: response.quality_id });
+      setAudioId(response.audio_id);
+      setQualityId(response.quality_id);
+      persistNumber(AUDIO_STORAGE_KEY, response.audio_id);
+      persistNumber(QUALITY_STORAGE_KEY, response.quality_id);
+    } catch (err) {
+      if (err instanceof ApiError && err.message === "variant_not_found") {
+        setResolveStatus("unavailable");
+        setResolvedSelection(null);
+        return;
+      }
+      setResolveStatus(null);
+    }
+  };
+
   useEffect(() => {
     const loadEpisodes = async () => {
       if (!title || title.type !== "series") {
@@ -60,6 +125,19 @@ export const TitlePage = () => {
     };
     loadEpisodes().catch(() => null);
   }, [title, selectedSeason]);
+
+  useEffect(() => {
+    if (!title) {
+      return;
+    }
+    if (title.type === "series" && !selectedEpisodeId) {
+      return;
+    }
+    if (!audioId && !qualityId) {
+      return;
+    }
+    resolveSelection(audioId, qualityId).catch(() => null);
+  }, [title, selectedEpisodeId]);
 
   const episodeIndex = useMemo(() => {
     if (!selectedEpisodeId) {
@@ -82,11 +160,36 @@ export const TitlePage = () => {
     if (!title || !audioId || !qualityId) {
       return;
     }
+    if (title.type === "series" && !selectedEpisodeId) {
+      return;
+    }
+    let resolvedAudioId = resolvedSelection?.audioId ?? audioId;
+    let resolvedQualityId = resolvedSelection?.qualityId ?? qualityId;
+    try {
+      const resolved = await api.watchResolve({
+        title_id: title.id,
+        episode_id: title.type === "series" ? selectedEpisodeId : null,
+        audio_id: audioId,
+        quality_id: qualityId,
+      });
+      resolvedAudioId = resolved.audio_id;
+      resolvedQualityId = resolved.quality_id;
+      setResolvedSelection({ audioId: resolvedAudioId, qualityId: resolvedQualityId });
+      setResolveStatus("available");
+    } catch (err) {
+      if (err instanceof ApiError && err.message === "variant_not_found") {
+        setResolveStatus("unavailable");
+        dispatch({ type: "error", message: "Выбранный вариант недоступен." });
+        return;
+      }
+      dispatch({ type: "error", message: "Не удалось проверить вариант." });
+      return;
+    }
     const payload: WatchRequestPayload = {
       title_id: title.id,
       episode_id: title.type === "series" ? selectedEpisodeId : null,
-      audio_id: audioId,
-      quality_id: qualityId,
+      audio_id: resolvedAudioId,
+      quality_id: resolvedQualityId,
     };
     dispatch({ type: "set_params", payload });
     dispatch({ type: "request_start" });
@@ -191,7 +294,12 @@ export const TitlePage = () => {
         <div className="field-row">
           <select
             value={audioId ?? ""}
-            onChange={(event) => setAudioId(Number(event.target.value))}
+            onChange={(event) => {
+              const nextAudioId = Number(event.target.value);
+              setAudioId(nextAudioId);
+              persistNumber(AUDIO_STORAGE_KEY, nextAudioId);
+              resolveSelection(nextAudioId, qualityId).catch(() => null);
+            }}
           >
             {title.available_audio_ids.map((idValue) => (
               <option key={idValue} value={idValue}>
@@ -201,7 +309,12 @@ export const TitlePage = () => {
           </select>
           <select
             value={qualityId ?? ""}
-            onChange={(event) => setQualityId(Number(event.target.value))}
+            onChange={(event) => {
+              const nextQualityId = Number(event.target.value);
+              setQualityId(nextQualityId);
+              persistNumber(QUALITY_STORAGE_KEY, nextQualityId);
+              resolveSelection(audioId, nextQualityId).catch(() => null);
+            }}
           >
             {title.available_quality_ids.map((idValue) => (
               <option key={idValue} value={idValue}>
@@ -210,6 +323,11 @@ export const TitlePage = () => {
             ))}
           </select>
         </div>
+        {resolveStatus && (
+          <div className="meta">
+            {resolveStatus === "available" ? "Вариант доступен" : "Вариант недоступен"}
+          </div>
+        )}
         <button className="button" onClick={handleWatch}>
           {title.type === "series" ? "Смотреть серию" : "Смотреть"}
         </button>

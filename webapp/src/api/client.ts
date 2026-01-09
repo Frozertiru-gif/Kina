@@ -6,6 +6,8 @@ import type {
   TitleDetail,
   TitleType,
   WatchRequestPayload,
+  WatchResolvePayload,
+  WatchResolveResponse,
   WatchResponse,
 } from "./types";
 
@@ -126,6 +128,11 @@ export const api = {
     }),
   watchRequest: (payload: WatchRequestPayload) =>
     apiFetch<WatchResponse>("/watch/request", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  watchResolve: (payload: WatchResolvePayload) =>
+    apiFetch<WatchResolveResponse>("/watch/resolve", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

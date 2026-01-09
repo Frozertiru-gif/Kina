@@ -7,11 +7,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import CurrentUser, get_current_user, get_db_session, is_premium_active
-from app.models import MediaVariant
+from app.models import MediaVariant, UserState
 from app.redis import get_redis, json_set, setnx_with_ttl
 from app.services.rate_limit import check_rate_limit, rate_limit_response, register_violation
+from app.services.watch_resolver import ResolveVariantError, resolve_watch_variant
 
 router = APIRouter()
+
+
+class WatchResolveRequest(BaseModel):
+    title_id: int
+    episode_id: int | None = None
+    audio_id: int | None = None
+    quality_id: int | None = None
+
+
+class WatchResolveResponse(BaseModel):
+    variant_id: int
+    audio_id: int
+    quality_id: int
 
 
 class WatchRequest(BaseModel):
@@ -88,6 +102,17 @@ async def watch_request(
             },
         )
 
+    variant_id = variant.id
+    state = await session.get(UserState, user.id)
+    if state is None:
+        state = UserState(user_id=user.id)
+        session.add(state)
+    state.preferred_audio_id = payload.audio_id
+    state.preferred_quality_id = payload.quality_id
+    state.last_title_id = payload.title_id
+    state.last_episode_id = payload.episode_id
+    await session.commit()
+
     premium_active = is_premium_active(user.premium_until)
     mode = "direct" if premium_active else "ad_gate"
     if not premium_active:
@@ -105,10 +130,42 @@ async def watch_request(
 
     return {
         "mode": mode,
-        "variant_id": variant.id,
+        "variant_id": variant_id,
         "title_id": payload.title_id,
         "episode_id": payload.episode_id,
     }
+
+
+@router.post("/watch/resolve", response_model=WatchResolveResponse)
+async def watch_resolve(
+    payload: WatchResolveRequest,
+    user: CurrentUser = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> WatchResolveResponse:
+    try:
+        result = await resolve_watch_variant(
+            session,
+            user_id=user.id,
+            title_id=payload.title_id,
+            episode_id=payload.episode_id,
+            audio_id=payload.audio_id,
+            quality_id=payload.quality_id,
+        )
+    except ResolveVariantError as exc:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "error": "variant_not_found",
+                "available_audio_ids": exc.payload.available_audio_ids,
+                "available_quality_ids": exc.payload.available_quality_ids,
+                "available_variants": exc.payload.available_variants,
+            },
+        )
+    return WatchResolveResponse(
+        variant_id=result.variant_id,
+        audio_id=result.audio_id,
+        quality_id=result.quality_id,
+    )
 
 
 @router.post("/watch/dispatch")

@@ -60,14 +60,16 @@ def audio_menu_keyboard(
     title_id: int,
     episode_id: int | None,
     audio_options: list[tuple[int, str]],
+    current_audio_id: int | None,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for audio_id, name in audio_options:
+        label = f"✅ {name}" if current_audio_id == audio_id else name
         if episode_id is None:
             callback = f"aud_set:{title_id}:{audio_id}"
         else:
             callback = f"aud_set:{title_id}:{episode_id}:{audio_id}"
-        builder.button(text=name, callback_data=callback)
+        builder.button(text=label, callback_data=callback)
     builder.button(text="Назад", callback_data=_back_payload(title_id, episode_id))
     builder.button(text="Скрыть", callback_data="hide")
     builder.adjust(1)
@@ -78,14 +80,16 @@ def quality_menu_keyboard(
     title_id: int,
     episode_id: int | None,
     quality_options: list[tuple[int, str]],
+    current_quality_id: int | None,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for quality_id, name in quality_options:
+        label = f"✅ {name}" if current_quality_id == quality_id else name
         if episode_id is None:
             callback = f"q_set:{title_id}:{quality_id}"
         else:
             callback = f"q_set:{title_id}:{episode_id}:{quality_id}"
-        builder.button(text=name, callback_data=callback)
+        builder.button(text=label, callback_data=callback)
     builder.button(text="Назад", callback_data=_back_payload(title_id, episode_id))
     builder.button(text="Скрыть", callback_data="hide")
     builder.adjust(1)

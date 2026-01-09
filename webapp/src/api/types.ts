@@ -39,6 +39,19 @@ export interface WatchRequestPayload {
   quality_id: number;
 }
 
+export interface WatchResolvePayload {
+  title_id: number;
+  episode_id: number | null;
+  audio_id: number | null;
+  quality_id: number | null;
+}
+
+export interface WatchResolveResponse {
+  variant_id: number;
+  audio_id: number;
+  quality_id: number;
+}
+
 export interface WatchResponse {
   mode: "direct" | "ad_gate";
   variant_id: number;
