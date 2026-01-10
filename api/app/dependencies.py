@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, unquote
 
 from fastapi import Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
@@ -55,8 +55,22 @@ def _parse_init_data(init_data: str) -> dict[str, Any]:
     return dict(parse_qsl(init_data, strict_parsing=False, keep_blank_values=True))
 
 
+def _normalize_init_data(init_data: str) -> str:
+    normalized = init_data.strip()
+    if normalized.startswith("?") or normalized.startswith("#"):
+        normalized = normalized[1:]
+    if "tgWebAppData=" in normalized:
+        for part in normalized.split("&"):
+            if not part:
+                continue
+            if part.startswith("tgWebAppData="):
+                normalized = unquote(part.split("=", 1)[1])
+                break
+    return normalized
+
+
 def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
-    parsed = _parse_init_data(init_data)
+    parsed = _parse_init_data(_normalize_init_data(init_data))
     provided_hash = parsed.pop("hash", None)
     if not provided_hash:
         raise HTTPException(
