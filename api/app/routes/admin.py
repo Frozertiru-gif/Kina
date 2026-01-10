@@ -512,15 +512,24 @@ async def update_variant(
     if not variant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
     update_data = payload.model_dump(exclude_unset=True)
+    effective_title_id = update_data.get("title_id", variant.title_id)
     if "title_id" in update_data:
         title = await session.get(Title, update_data["title_id"])
         if not title:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+        if "episode_id" not in update_data and variant.episode_id is not None:
+            episode = await session.get(Episode, variant.episode_id)
+            if not episode:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
+            if episode.title_id != update_data["title_id"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch"
+                )
     if "episode_id" in update_data and update_data["episode_id"] is not None:
         episode = await session.get(Episode, update_data["episode_id"])
         if not episode:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
-        if "title_id" in update_data and episode.title_id != update_data["title_id"]:
+        if episode.title_id != effective_title_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch")
     for key, value in update_data.items():
         setattr(variant, key, value)
