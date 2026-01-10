@@ -26,6 +26,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from logging_utils import configure_logging
 
 
 class Settings(BaseSettings):
@@ -871,4 +872,3 @@ def _prepare_optional_dir(path_value: str | None) -> Path | None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-from logging_utils import configure_logging
