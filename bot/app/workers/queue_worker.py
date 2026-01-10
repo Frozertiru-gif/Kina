@@ -43,7 +43,15 @@ async def run_queue_worker(
             logger.warning("Invalid payload in %s: %s", queue_name, raw_payload)
             continue
         async with session_maker() as session:
-            await _dispatch_job(bot, session, queue_name, payload)
+            try:
+                await _dispatch_job(bot, session, queue_name, payload)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to dispatch job from %s with payload %s",
+                    queue_name,
+                    payload,
+                )
+                continue
 
 
 async def _dispatch_job(
