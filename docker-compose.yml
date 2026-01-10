@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -21,9 +26,12 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - migrations
-      - postgres
-      - redis
+      migrations:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -34,16 +42,21 @@ services:
     build: ./bot
     env_file: .env
     depends_on:
-      - redis
-      - postgres
-      - api
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_healthy
 
   uploader:
     build: ./uploader
     env_file: .env
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - ./data/ingest:/data/ingest
       - ./data/archive:/data/archive
@@ -64,7 +77,8 @@ services:
     build: ./api
     env_file: .env
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     command: ["alembic", "upgrade", "head"]
 
 volumes:
