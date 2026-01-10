@@ -113,8 +113,10 @@ def build_router(
                 await message.answer("Реферальный код применён. Спасибо!")
             else:
                 await message.answer("Реферальный код не применён.")
-        else:
-            await message.answer("Добро пожаловать в Kina!")
+        await message.answer(
+            "Добро пожаловать в Kina!",
+            reply_markup=keyboards.start_keyboard(settings.webapp_url),
+        )
         logger.info(
             "start handled",
             extra={
