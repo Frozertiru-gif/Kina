@@ -52,10 +52,10 @@ async def _get_premium_until(session: AsyncSession, user_id: int) -> Any | None:
 
 @router.post("/auth/webapp", response_model=WebAppAuthResponse)
 async def auth_webapp(
+    request: Request,
     payload: WebAppAuthRequest = Body(...),
     x_dev_user_id: str | None = Header(default=None, alias="X-Dev-User-Id"),
     x_init_data: str | None = Header(default=None, alias="X-Init-Data"),
-    request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> WebAppAuthResponse:
     init_data = payload.initData or x_init_data
