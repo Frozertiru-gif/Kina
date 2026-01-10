@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
+from logging_utils import configure_logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, func, select
@@ -413,8 +414,8 @@ async def handle_job(
                 error="variant_missing",
                 variant_status="failed",
             )
-        await move_to_failed(file_path, failed_dir, reason="variant_missing")
-        return
+            await move_to_failed(file_path, failed_dir, reason="variant_missing")
+            return
         variant.status = "uploading"
         await session.commit()
 
@@ -734,4 +735,3 @@ def _prepare_optional_dir(path_value: str | None) -> Path | None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-from logging_utils import configure_logging
