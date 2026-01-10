@@ -28,7 +28,12 @@ logger = logging.getLogger("kina.api")
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Kina API")
+    app = FastAPI(
+        title="Kina API",
+        docs_url="/api/docs",
+        openapi_url="/api/openapi.json",
+        redoc_url=None,
+    )
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next) -> Response:
@@ -55,6 +60,10 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=403, content={"error": "banned"})
 
     api_router = APIRouter(prefix="/api")
+
+    @api_router.get("")
+    async def api_root() -> dict[str, object]:
+        return {"ok": True, "docs": "/api/docs"}
     api_router.include_router(health.router)
     api_router.include_router(auth.router)
     api_router.include_router(catalog.router)
