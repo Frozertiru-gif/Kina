@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import { api } from "../api/client";
 import type { AuthResponse, ReferralInfo, Title } from "../api/types";
+import { useTelegramInitData } from "./telegramInitData";
 
 interface UserDataContextValue {
   favorites: Title[];
@@ -34,6 +35,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
   const [premiumActive, setPremiumActive] = useState(false);
   const [referral, setReferral] = useState<ReferralInfo | null>(null);
+  const { initDataLen } = useTelegramInitData();
 
   const refreshFavorites = useCallback(async () => {
     const data = await api.getFavorites();
@@ -59,6 +61,12 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   );
 
   const refreshAuth = useCallback(async () => {
+    if (initDataLen === 0) {
+      setUser(null);
+      setPremiumUntil(null);
+      setPremiumActive(false);
+      return;
+    }
     const storedRef =
       typeof window === "undefined" ? null : localStorage.getItem("kina_referral_code");
     const data = await api.authWebapp(storedRef);
@@ -72,7 +80,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
     if (storedRef) {
       localStorage.removeItem("kina_referral_code");
     }
-  }, []);
+  }, [initDataLen]);
 
   const refreshReferral = useCallback(async () => {
     const data = await api.getReferralMe();
@@ -80,8 +88,10 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   }, []);
 
   useEffect(() => {
-    refreshAuth().catch(() => null);
-  }, [refreshAuth]);
+    if (initDataLen > 0) {
+      refreshAuth().catch(() => null);
+    }
+  }, [initDataLen, refreshAuth]);
 
   const favoriteIds = useMemo(
     () => new Set(favorites.map((favorite) => favorite.id)),

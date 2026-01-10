@@ -2,12 +2,14 @@ import { useEffect } from "react";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 import { authInfo } from "./api/client";
 import { BottomNav } from "./components/BottomNav";
+import { TelegramDiagnosticsBanner } from "./components/TelegramDiagnosticsBanner";
 import { AdPage } from "./pages/AdPage";
 import { FavoritesPage } from "./pages/FavoritesPage";
 import { HomePage } from "./pages/HomePage";
 import { PremiumPage } from "./pages/PremiumPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { TitlePage } from "./pages/TitlePage";
+import { TelegramInitDataProvider, telegramEnv, useTelegramInitData } from "./state/telegramInitData";
 import { UserDataProvider, useUserData } from "./state/userData";
 import { WatchProvider } from "./state/watchFlow";
 
@@ -33,6 +35,7 @@ const TopBar = () => {
 
 const AppLayout = () => {
   const { refreshFavorites, refreshSubscriptions } = useUserData();
+  const { initDataLen, refreshInitData, isChecking } = useTelegramInitData();
 
   useEffect(() => {
     refreshFavorites().catch(() => null);
@@ -40,8 +43,27 @@ const AppLayout = () => {
   }, [refreshFavorites, refreshSubscriptions]);
 
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      style={telegramEnv.diagnosticsEnabled ? { paddingTop: "92px" } : undefined}
+    >
+      <TelegramDiagnosticsBanner />
       <TopBar />
+      {initDataLen === 0 && (
+        <div className="main-content" style={{ paddingBottom: 0 }}>
+          <div className="card">
+            <p className="meta">Откройте WebApp из Telegram, не из браузера</p>
+            <button
+              type="button"
+              className="button"
+              onClick={() => refreshInitData().catch(() => null)}
+              disabled={isChecking}
+            >
+              {isChecking ? "Проверяем..." : "Повторить проверку"}
+            </button>
+          </div>
+        </div>
+      )}
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/title/:id" element={<TitlePage />} />
@@ -78,11 +100,13 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <UserDataProvider>
-        <WatchProvider>
-          <AppLayout />
-        </WatchProvider>
-      </UserDataProvider>
+      <TelegramInitDataProvider>
+        <UserDataProvider>
+          <WatchProvider>
+            <AppLayout />
+          </WatchProvider>
+        </UserDataProvider>
+      </TelegramInitDataProvider>
     </BrowserRouter>
   );
 }

@@ -10,21 +10,9 @@ import type {
   WatchResolveResponse,
   WatchResponse,
 } from "./types";
+import { getCurrentInitData } from "../state/telegramInitData";
 
 const API_BASE = "/api";
-
-const getTelegramInitData = (): string => {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  const webApp = (window as typeof window & {
-    Telegram?: { WebApp?: { initData?: string; initDataUnsafe?: unknown } };
-  }).Telegram?.WebApp;
-  if (webApp?.initData) {
-    return webApp.initData;
-  }
-  return "";
-};
 
 const getDevUserId = (): string | null => {
   if (typeof window === "undefined") {
@@ -34,8 +22,8 @@ const getDevUserId = (): string | null => {
 };
 
 const getAuthHeaders = (): Record<string, string> => {
-  const initData = getTelegramInitData();
-  if (initData) {
+  const initData = getCurrentInitData();
+  if (initData.length > 0) {
     return { "X-Init-Data": initData };
   }
   const devUserId = getDevUserId();
@@ -95,7 +83,7 @@ export const api = {
     apiFetch<AuthResponse>("/auth/webapp", {
       method: "POST",
       body: JSON.stringify({
-        initData: getTelegramInitData() || null,
+        initData: getCurrentInitData() || null,
         ref: ref || null,
       }),
     }),
@@ -155,7 +143,7 @@ export const api = {
 
 export const authInfo = {
   get initData(): string {
-    return getTelegramInitData();
+    return getCurrentInitData();
   },
   get devUserId(): string | null {
     return getDevUserId();
