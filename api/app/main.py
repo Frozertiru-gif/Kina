@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 
 from fastapi import APIRouter, FastAPI, Request
@@ -42,6 +43,23 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         response.headers["X-Request-Id"] = request_id
         tg_user_id = getattr(request.state, "tg_user_id", None)
+        if (
+            os.getenv("AUTH_UNAUTHORIZED_DEBUG", "0") == "1"
+            and response.status_code == 401
+            and request.url.path.startswith("/api")
+        ):
+            logger.info(
+                "unauthorized request",
+                extra={
+                    "action": "unauthorized_debug",
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "has_x_init_data": "x-init-data" in request.headers,
+                    "has_authorization": "authorization" in request.headers,
+                    "has_cookie": "cookie" in request.headers,
+                },
+            )
         logger.info(
             "request completed",
             extra={

@@ -10,7 +10,8 @@ import type {
   WatchResolveResponse,
   WatchResponse,
 } from "./types";
-import { getCurrentInitData } from "../state/telegramInitData";
+import { getCurrentInitData, telegramEnv } from "../state/telegramInitData";
+import { waitForAuthReady } from "./authGate";
 
 const API_BASE = "/api";
 
@@ -46,7 +47,16 @@ export class ApiError extends Error {
 const apiFetch = async <T>(
   path: string,
   options: RequestInit = {},
+  config: { requiresAuth?: boolean; onResponse?: (response: Response) => void } = {},
 ): Promise<T> => {
+  const devUserId = getDevUserId();
+  if (config.requiresAuth && !devUserId) {
+    const initData = getCurrentInitData();
+    if (!initData) {
+      throw new Error("auth_missing");
+    }
+    await waitForAuthReady();
+  }
   const headers = new Headers(options.headers);
   const authHeaders = getAuthHeaders();
   Object.entries(authHeaders).forEach(([key, value]) => headers.set(key, value));
@@ -58,6 +68,7 @@ const apiFetch = async <T>(
     ...options,
     headers,
   });
+  config.onResponse?.(response);
 
   if (response.status === 401 || response.status === 403) {
     throw new Error("auth_error");
@@ -86,6 +97,12 @@ export const api = {
         initData: getCurrentInitData() || null,
         ref: ref || null,
       }),
+    }, {
+      onResponse: (response) => {
+        if (telegramEnv.debugEnabled) {
+          console.info("[tg-auth] /api/auth/webapp", response.status);
+        }
+      },
     }),
   getReferralMe: () => apiFetch<ReferralInfo>("/referral/me"),
   getTop: (type?: TitleType) =>
@@ -96,24 +113,28 @@ export const api = {
     if (type) {
       params.set("type", type);
     }
-    return apiFetch<Title[]>(`/catalog/search?${params.toString()}`);
+    return apiFetch<Title[]>(`/catalog/search?${params.toString()}`, {}, {
+      requiresAuth: true,
+    });
   },
   getTitle: (id: number) => apiFetch<TitleDetail>(`/title/${id}`),
   getEpisodes: (id: number, season: number) =>
     apiFetch<Episode[]>(`/title/${id}/episodes?season=${season}`),
-  getFavorites: () => apiFetch<Title[]>("/favorites"),
+  getFavorites: () => apiFetch<Title[]>("/favorites", {}, { requiresAuth: true }),
   toggleFavorite: (titleId: number) =>
     apiFetch<{ title_id: number; favorited: boolean }>("/favorites/toggle", {
       method: "POST",
       body: JSON.stringify({ title_id: titleId }),
-    }),
+    }, { requiresAuth: true }),
   getSubscriptions: () =>
-    apiFetch<{ title_id: number; enabled: boolean }[]>("/subscriptions"),
+    apiFetch<{ title_id: number; enabled: boolean }[]>("/subscriptions", {}, {
+      requiresAuth: true,
+    }),
   toggleSubscription: (titleId: number) =>
     apiFetch<{ title_id: number; enabled: boolean }>("/subscriptions/toggle", {
       method: "POST",
       body: JSON.stringify({ title_id: titleId }),
-    }),
+    }, { requiresAuth: true }),
   watchRequest: (payload: WatchRequestPayload) =>
     apiFetch<WatchResponse>("/watch/request", {
       method: "POST",

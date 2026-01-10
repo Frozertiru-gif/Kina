@@ -1,13 +1,14 @@
 import json
+import logging
 import os
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import _ensure_not_banned, get_db_session
+from app.dependencies import _ensure_not_banned, _parse_init_data, get_db_session
 from app.models import UserPremium
 from app.dependencies import _get_dev_user_id, _is_dev_bypass_allowed, _upsert_user, _validate_init_data
 from app.services.rate_limit import rate_limit_response, register_violation
@@ -18,6 +19,15 @@ from app.services.referrals import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("kina.api")
+
+
+def _is_webapp_debug_enabled() -> bool:
+    return os.getenv("AUTH_WEBAPP_DEBUG", "0") == "1"
+
+
+def _is_webapp_strict() -> bool:
+    return os.getenv("AUTH_WEBAPP_STRICT", "1") != "0"
 
 
 class WebAppAuthRequest(BaseModel):
@@ -44,10 +54,28 @@ async def _get_premium_until(session: AsyncSession, user_id: int) -> Any | None:
 async def auth_webapp(
     payload: WebAppAuthRequest = Body(...),
     x_dev_user_id: str | None = Header(default=None, alias="X-Dev-User-Id"),
+    x_init_data: str | None = Header(default=None, alias="X-Init-Data"),
+    request: Request,
     session: AsyncSession = Depends(get_db_session),
 ) -> WebAppAuthResponse:
-    init_data = payload.initData
+    init_data = payload.initData or x_init_data
     referral_code = payload.ref
+    if _is_webapp_debug_enabled():
+        body_bytes = await request.body() if request else b""
+        init_data_source = "body" if payload.initData else "header" if x_init_data else "missing"
+        init_data_preview = init_data[:120] if init_data else ""
+        logger.info(
+            "auth webapp debug",
+            extra={
+                "action": "auth_webapp_debug",
+                "init_data_source": init_data_source,
+                "init_data_len": len(init_data or ""),
+                "init_data_preview": init_data_preview,
+                "content_type": request.headers.get("content-type") if request else None,
+                "body_len": len(body_bytes),
+                "header_init_data_len": len(x_init_data or ""),
+            },
+        )
     if _is_dev_bypass_allowed() and not init_data:
         tg_user_id = _get_dev_user_id(x_dev_user_id)
         user = await _upsert_user(session, tg_user_id, None, None, None)
@@ -77,7 +105,11 @@ async def auth_webapp(
     bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
-    parsed = _validate_init_data(init_data, bot_token)
+    parsed = (
+        _validate_init_data(init_data, bot_token)
+        if _is_webapp_strict()
+        else _parse_init_data(init_data)
+    )
     raw_user = parsed.get("user")
     if not raw_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="init_data_user_missing")

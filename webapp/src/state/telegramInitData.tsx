@@ -8,7 +8,8 @@ import React, {
   useState,
 } from "react";
 
-const parseBoolean = (value: string | undefined): boolean => value === "true";
+const parseBoolean = (value: string | undefined): boolean =>
+  value === "true" || value === "1";
 
 const parseNumber = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
@@ -20,8 +21,9 @@ export const telegramEnv = {
   initDataRetry: parseNumber(import.meta.env.VITE_TG_INITDATA_RETRY, 10),
   initDataRetryDelayMs: parseNumber(
     import.meta.env.VITE_TG_INITDATA_RETRY_DELAY_MS,
-    100,
+    200,
   ),
+  debugEnabled: parseBoolean(import.meta.env.VITE_TG_DEBUG),
 };
 
 type TelegramWebApp = {
@@ -39,36 +41,72 @@ const getTelegramWebApp = (): TelegramWebApp | undefined => {
   }).Telegram?.WebApp;
 };
 
-const readInitData = (): string => getTelegramWebApp()?.initData ?? "";
+type InitDataSource = "telegram" | "url-search" | "url-hash" | null;
+
+const readInitDataFromUrl = (): { value: string; source: InitDataSource } => {
+  if (typeof window === "undefined") {
+    return { value: "", source: null };
+  }
+  const searchParams = new URLSearchParams(window.location.search);
+  const searchValue = searchParams.get("tgWebAppData");
+  if (searchValue) {
+    return { value: searchValue, source: "url-search" };
+  }
+  const rawHash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  const hash = rawHash.startsWith("?") ? rawHash.slice(1) : rawHash;
+  const hashParams = new URLSearchParams(hash);
+  const hashValue = hashParams.get("tgWebAppData");
+  if (hashValue) {
+    return { value: hashValue, source: "url-hash" };
+  }
+  return { value: "", source: null };
+};
+
+const readInitData = (): { value: string; source: InitDataSource } => {
+  const telegramInitData = getTelegramWebApp()?.initData ?? "";
+  if (telegramInitData) {
+    return { value: telegramInitData, source: "telegram" };
+  }
+  return readInitDataFromUrl();
+};
 
 let currentInitData = "";
+let currentInitDataSource: InitDataSource = null;
 
 export const getCurrentInitData = (): string => currentInitData;
+export const getCurrentInitDataSource = (): InitDataSource => currentInitDataSource;
 
-const setCurrentInitData = (value: string) => {
+const setCurrentInitData = (value: string, source: InitDataSource) => {
   currentInitData = value;
+  currentInitDataSource = source;
 };
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const retryInitData = async (retries: number, delayMs: number): Promise<string> => {
-  let initData = readInitData();
-  if (initData) {
-    return initData;
+const retryInitData = async (
+  retries: number,
+  delayMs: number,
+): Promise<{ value: string; source: InitDataSource }> => {
+  let result = readInitData();
+  if (result.value) {
+    return result;
   }
   for (let attempt = 0; attempt < retries; attempt += 1) {
     await delay(delayMs);
-    initData = readInitData();
-    if (initData) {
-      return initData;
+    result = readInitData();
+    if (result.value) {
+      return result;
     }
   }
-  return "";
+  return { value: "", source: null };
 };
 
 interface TelegramInitDataContextValue {
   initData: string;
   initDataLen: number;
+  initDataSource: InitDataSource;
   isTelegram: boolean;
   platform: string | null;
   version: string | null;
@@ -82,11 +120,14 @@ const TelegramInitDataContext = createContext<TelegramInitDataContextValue | und
 );
 
 export const TelegramInitDataProvider = ({ children }: { children: React.ReactNode }) => {
-  const initialInitData = getCurrentInitData() || readInitData();
+  const initialRead = readInitData();
+  const initialInitData = getCurrentInitData() || initialRead.value;
+  const initialSource = getCurrentInitDataSource() || initialRead.source;
   if (initialInitData && initialInitData !== currentInitData) {
-    setCurrentInitData(initialInitData);
+    setCurrentInitData(initialInitData, initialSource);
   }
   const [initData, setInitData] = useState(() => initialInitData);
+  const [initDataSource, setInitDataSource] = useState<InitDataSource>(initialSource);
   const [timestamp, setTimestamp] = useState(Date.now());
   const [isChecking, setIsChecking] = useState(false);
   const inflightRef = useRef<Promise<void> | null>(null);
@@ -97,14 +138,25 @@ export const TelegramInitDataProvider = ({ children }: { children: React.ReactNo
     }
     const task = (async () => {
       setIsChecking(true);
+      if (telegramEnv.debugEnabled) {
+        const hasTelegram = Boolean(getTelegramWebApp());
+        console.info("[tg-init] start", { hasTelegram });
+      }
       const data = await retryInitData(
         telegramEnv.initDataRetry,
         telegramEnv.initDataRetryDelayMs,
       );
-      setCurrentInitData(data);
-      setInitData(data);
+      setCurrentInitData(data.value, data.source);
+      setInitData(data.value);
+      setInitDataSource(data.source);
       setTimestamp(Date.now());
       setIsChecking(false);
+      if (telegramEnv.debugEnabled) {
+        console.info("[tg-init] result", {
+          initDataLen: data.value.length,
+          source: data.source,
+        });
+      }
     })().finally(() => {
       inflightRef.current = null;
     });
@@ -125,6 +177,7 @@ export const TelegramInitDataProvider = ({ children }: { children: React.ReactNo
     () => ({
       initData,
       initDataLen: initData.length,
+      initDataSource,
       isTelegram,
       platform,
       version,
@@ -132,7 +185,16 @@ export const TelegramInitDataProvider = ({ children }: { children: React.ReactNo
       isChecking,
       refreshInitData,
     }),
-    [initData, isTelegram, platform, version, timestamp, isChecking, refreshInitData],
+    [
+      initData,
+      initDataSource,
+      isTelegram,
+      platform,
+      version,
+      timestamp,
+      isChecking,
+      refreshInitData,
+    ],
   );
 
   return (

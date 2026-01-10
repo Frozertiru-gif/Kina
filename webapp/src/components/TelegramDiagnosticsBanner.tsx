@@ -1,7 +1,7 @@
 import { telegramEnv, useTelegramInitData } from "../state/telegramInitData";
 
 export const TelegramDiagnosticsBanner = () => {
-  const { initData, initDataLen, isTelegram, platform, version, timestamp } =
+  const { initData, initDataLen, initDataSource, isTelegram, platform, version, timestamp } =
     useTelegramInitData();
 
   if (!telegramEnv.diagnosticsEnabled) {
@@ -28,6 +28,7 @@ export const TelegramDiagnosticsBanner = () => {
     >
       <div>isTelegram: {String(isTelegram)}</div>
       <div>initDataLen: {initDataLen}</div>
+      <div>initDataSource: {initDataSource ?? "none"}</div>
       <div>initDataPreview: {initDataPreview}</div>
       <div>platform: {platform ?? "unknown"}</div>
       <div>version: {version ?? "unknown"}</div>
