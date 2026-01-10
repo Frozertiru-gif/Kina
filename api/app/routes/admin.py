@@ -19,6 +19,7 @@ from app.models import (
     Title,
     TitleType,
     UploadJob,
+    Subscription,
     User,
     UserPremium,
 )
@@ -52,6 +53,88 @@ async def _log_admin_event(
         entity_id=entity_id,
         metadata_json=payload,
     )
+
+
+async def _enqueue_publish_notifications(
+    session: AsyncSession,
+    admin_info: dict,
+    episode: Episode,
+) -> None:
+    if not episode.published_at:
+        return
+    episode_result = await session.execute(
+        select(Season, Title)
+        .join(Title, Season.title_id == Title.id)
+        .where(Season.id == episode.season_id)
+    )
+    row = episode_result.first()
+    if not row:
+        return
+    season, title = row
+    if title.type != TitleType.SERIES:
+        return
+    variant_result = await session.execute(
+        select(MediaVariant)
+        .where(
+            MediaVariant.episode_id == episode.id,
+            MediaVariant.status == "ready",
+        )
+        .order_by(MediaVariant.updated_at.desc())
+        .limit(1)
+    )
+    variant = variant_result.scalar_one_or_none()
+    if not variant:
+        return
+    result = await session.execute(
+        select(User.tg_user_id)
+        .join(Subscription, Subscription.user_id == User.id)
+        .where(
+            Subscription.title_id == title.id,
+            Subscription.enabled.is_(True),
+        )
+    )
+    tg_user_ids = [row[0] for row in result.fetchall()]
+    if not tg_user_ids:
+        return
+
+    redis = get_redis()
+    text = (
+        "Новая серия вышла: "
+        f"{title.name} — S{season.season_number}E{episode.episode_number}. Открыть?"
+    )
+    enqueued = 0
+    deduped = 0
+    for tg_user_id in tg_user_ids:
+        dedupe_key = f"notif:{tg_user_id}:{episode.id}"
+        dedupe_set = await redis.set(dedupe_key, "1", nx=True, ex=60 * 60 * 24 * 7)
+        if not dedupe_set:
+            deduped += 1
+            continue
+        payload = {
+            "tg_user_id": tg_user_id,
+            "title_id": title.id,
+            "episode_id": episode.id,
+            "text": text,
+            "variant_id": variant.id,
+        }
+        await redis.rpush("notify_queue", json.dumps(payload, ensure_ascii=False))
+        enqueued += 1
+
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="notification_enqueued",
+        entity_type="episode",
+        entity_id=episode.id,
+        metadata={
+            "title_id": title.id,
+            "variant_id": variant.id,
+            "total_subscribers": len(tg_user_ids),
+            "enqueued": enqueued,
+            "deduped": deduped,
+        },
+    )
+    await session.commit()
 
 
 class TitleCreate(BaseModel):
@@ -448,6 +531,7 @@ async def publish_episode(
     )
     await session.commit()
     await session.refresh(episode)
+    await _enqueue_publish_notifications(session, admin_info, episode)
     return {"id": episode.id, "published_at": episode.published_at}
 
 
