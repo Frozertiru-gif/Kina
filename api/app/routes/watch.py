@@ -110,7 +110,30 @@ async def watch_dispatch(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     redis = get_redis()
-    queue = "send_video_vip_queue" if is_premium_active(user.premium_until) else "send_video_queue"
+    watchctx_key = f"watchctx:{user.tg_user_id}"
+    raw_ctx = await redis.get(watchctx_key)
+    if not raw_ctx:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "missing_watch_context"},
+        )
+    watch_ctx = json.loads(raw_ctx)
+    if int(watch_ctx.get("variant_id", 0)) != payload.variant_id:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"error": "watch_context_mismatch"},
+        )
+
+    premium_active = is_premium_active(user.premium_until)
+    if not premium_active:
+        pass_key = f"ad_pass:{user.tg_user_id}:{payload.variant_id}"
+        if not await redis.exists(pass_key):
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "ad_pass_required"},
+            )
+
+    queue = "send_video_vip_queue" if premium_active else "send_video_queue"
     payload_data = {"tg_user_id": user.tg_user_id, "variant_id": payload.variant_id}
     await redis.rpush(queue, json.dumps(payload_data, ensure_ascii=False))
     return {"queued": True}
