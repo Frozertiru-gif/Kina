@@ -68,13 +68,11 @@ services:
       - ./data/failed:/data/failed
 
   nginx:
-    image: nginx:alpine
+    build:
+      context: .
+      dockerfile: infra/nginx.Dockerfile
     ports:
       - "80:80"
-    volumes:
-      - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./infra/webapp:/usr/share/nginx/html:ro
-      - ./infra/admin:/usr/share/nginx/admin:ro
     depends_on:
       - api
 
