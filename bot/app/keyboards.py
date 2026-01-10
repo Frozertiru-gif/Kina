@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, WebAppInfo
+from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
@@ -27,12 +27,6 @@ def refresh_keyboard(variant_id: int) -> InlineKeyboardMarkup:
     builder.button(text="Обновить", callback_data=f"refresh:{variant_id}")
     builder.button(text="Скрыть", callback_data="hide")
     builder.adjust(1, 1)
-    return builder.as_markup()
-
-
-def catalog_keyboard(webapp_url: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Каталог", web_app=WebAppInfo(url=webapp_url))
     return builder.as_markup()
 
 
