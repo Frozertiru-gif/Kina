@@ -100,14 +100,14 @@ type ReferralRewardItem = {
 };
 
 const tabs = [
-  { id: "dashboard", label: "Dashboard" },
-  { id: "titles", label: "Titles" },
-  { id: "variants", label: "Variants" },
-  { id: "jobs", label: "Upload Jobs" },
-  { id: "audio", label: "Audio Tracks" },
-  { id: "qualities", label: "Qualities" },
-  { id: "users", label: "Users" },
-  { id: "referrals", label: "Referrals" },
+  { id: "dashboard", label: "Панель" },
+  { id: "titles", label: "Тайтлы" },
+  { id: "variants", label: "Варианты" },
+  { id: "jobs", label: "Задания загрузки" },
+  { id: "audio", label: "Аудиодорожки" },
+  { id: "qualities", label: "Качества" },
+  { id: "users", label: "Пользователи" },
+  { id: "referrals", label: "Рефералы" },
 ];
 
 async function apiFetch<T>(
@@ -132,7 +132,7 @@ async function apiFetch<T>(
   });
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || `Request failed: ${response.status}`);
+    throw new Error(message || `Ошибка запроса: ${response.status}`);
   }
   if (response.status === 204) {
     return {} as T;
@@ -198,7 +198,7 @@ export default function App() {
         }}
       >
         <div>
-          <h1 style={{ margin: 0 }}>Kina Admin</h1>
+          <h1 style={{ margin: 0 }}>Kina Админ</h1>
           <p style={{ margin: "0.25rem 0 0", color: "#6b7280" }}>
             API: {apiUrl}
           </p>
@@ -211,7 +211,7 @@ export default function App() {
             style={{ padding: "0.5rem", width: "220px" }}
           />
           <input
-            placeholder="TG user id (allowlist)"
+            placeholder="ID пользователя TG (allowlist)"
             value={adminUserId}
             onChange={(event) => setAdminUserId(event.target.value)}
             style={{ padding: "0.5rem", width: "180px" }}
@@ -321,13 +321,13 @@ function Dashboard({ api, onError }: { api: any; onError: (msg: string) => void 
 
   return (
     <section>
-      <h2>Dashboard</h2>
+      <h2>Панель</h2>
       <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "repeat(3, 1fr)" }}>
-        <StatCard label="Titles" value={stats.titles} />
-        <StatCard label="Variants pending" value={stats.pendingVariants} />
-        <StatCard label="Variants ready" value={stats.readyVariants} />
-        <StatCard label="Jobs queued" value={stats.queuedJobs} />
-        <StatCard label="Jobs failed" value={stats.failedJobs} />
+        <StatCard label="Тайтлы" value={stats.titles} />
+        <StatCard label="Варианты в ожидании" value={stats.pendingVariants} />
+        <StatCard label="Варианты готовы" value={stats.readyVariants} />
+        <StatCard label="Задания в очереди" value={stats.queuedJobs} />
+        <StatCard label="Задания с ошибкой" value={stats.failedJobs} />
       </div>
     </section>
   );
@@ -398,10 +398,10 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
 
   return (
     <section>
-      <h2>Titles</h2>
+      <h2>Тайтлы</h2>
       <div style={{ display: "flex", gap: "1rem", marginBottom: "1rem" }}>
         <input
-          placeholder="Search by name"
+          placeholder="Поиск по названию"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           style={{ padding: "0.5rem", flex: 1 }}
@@ -411,24 +411,24 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
           onChange={(event) => setTypeFilter(event.target.value)}
           style={{ padding: "0.5rem" }}
         >
-          <option value="">All types</option>
-          <option value="movie">Movie</option>
-          <option value="series">Series</option>
+          <option value="">Все типы</option>
+          <option value="movie">Фильм</option>
+          <option value="series">Сериал</option>
         </select>
         <button
           type="button"
           onClick={loadTitles}
           style={{ padding: "0.5rem 1rem" }}
         >
-          Search
+          Найти
         </button>
       </div>
 
       <div style={{ display: "grid", gap: "1rem", gridTemplateColumns: "1fr 2fr" }}>
         <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-          <h3 style={{ marginTop: 0 }}>Create title</h3>
+          <h3 style={{ marginTop: 0 }}>Создать тайтл</h3>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
-            Type
+            Тип
             <select
               value={newTitle.type}
               onChange={(event) =>
@@ -436,12 +436,12 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
               }
               style={{ display: "block", marginTop: "0.25rem", width: "100%" }}
             >
-              <option value="movie">Movie</option>
-              <option value="series">Series</option>
+              <option value="movie">Фильм</option>
+              <option value="series">Сериал</option>
             </select>
           </label>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
-            Name
+            Название
             <input
               value={newTitle.name}
               onChange={(event) =>
@@ -451,7 +451,7 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
             />
           </label>
           <label style={{ display: "block", marginBottom: "0.5rem" }}>
-            Year
+            Год
             <input
               value={newTitle.year}
               onChange={(event) =>
@@ -461,13 +461,13 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
             />
           </label>
           <button type="button" onClick={handleCreate} style={{ padding: "0.5rem 1rem" }}>
-            Create
+            Создать
           </button>
         </div>
 
         <div>
           <div style={{ marginBottom: "0.5rem", color: "#6b7280" }}>
-            Total: {total}
+            Всего: {total}
           </div>
           <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
             {titles.map((title) => (
@@ -487,7 +487,7 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
               >
                 <strong>{title.name}</strong>
                 <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                  {title.type} · {title.year ?? "n/a"}
+                  {title.type === "movie" ? "фильм" : "сериал"} · {title.year ?? "нет"}
                 </div>
               </button>
             ))}
@@ -638,7 +638,7 @@ function TitleEditor({
             color: tab === "details" ? "#fff" : "#111827",
           }}
         >
-          Details
+          Детали
         </button>
         <button
           type="button"
@@ -651,16 +651,16 @@ function TitleEditor({
             color: tab === "variants" ? "#fff" : "#111827",
           }}
         >
-          Variants
+          Варианты
         </button>
       </div>
 
       {tab === "details" && (
         <div style={{ display: "grid", gap: "1.5rem" }}>
           <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-            <h3>Title editor</h3>
+            <h3>Редактор тайтла</h3>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
-              Name
+              Название
               <input
                 value={title.name}
                 onChange={(event) =>
@@ -670,7 +670,7 @@ function TitleEditor({
               />
             </label>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
-              Original name
+              Оригинальное название
               <input
                 value={title.original_name ?? ""}
                 onChange={(event) =>
@@ -682,7 +682,7 @@ function TitleEditor({
               />
             </label>
             <label style={{ display: "block", marginBottom: "0.5rem" }}>
-              Description
+              Описание
               <textarea
                 value={title.description ?? ""}
                 onChange={(event) =>
@@ -696,7 +696,7 @@ function TitleEditor({
             </label>
             <div style={{ display: "flex", gap: "1rem" }}>
               <label style={{ flex: 1 }}>
-                Year
+                Год
                 <input
                   value={title.year ?? ""}
                   onChange={(event) =>
@@ -708,7 +708,7 @@ function TitleEditor({
                 />
               </label>
               <label style={{ flex: 1 }}>
-                Poster URL
+                URL постера
                 <input
                   value={title.poster_url ?? ""}
                   onChange={(event) =>
@@ -729,20 +729,20 @@ function TitleEditor({
                     )
                   }
                 />
-                Published
+                Опубликован
               </label>
             </div>
             <button type="button" onClick={handleTitleSave} style={{ marginTop: "0.75rem" }}>
-              Save
+              Сохранить
             </button>
           </div>
 
           {title.type === "series" && (
             <div style={{ display: "grid", gap: "1rem" }}>
               <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-                <h3>Create season</h3>
+                <h3>Создать сезон</h3>
                 <input
-                  placeholder="Season number"
+                  placeholder="Номер сезона"
                   value={newSeason.season_number}
                   onChange={(event) =>
                     setNewSeason((prev) => ({ ...prev, season_number: event.target.value }))
@@ -750,7 +750,7 @@ function TitleEditor({
                   style={{ marginRight: "0.5rem" }}
                 />
                 <input
-                  placeholder="Name"
+                  placeholder="Название"
                   value={newSeason.name}
                   onChange={(event) =>
                     setNewSeason((prev) => ({ ...prev, name: event.target.value }))
@@ -758,12 +758,12 @@ function TitleEditor({
                   style={{ marginRight: "0.5rem" }}
                 />
                 <button type="button" onClick={handleSeasonCreate}>
-                  Create season
+                  Создать сезон
                 </button>
               </div>
 
               <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-                <h3>Create episode</h3>
+                <h3>Создать эпизод</h3>
                 <select
                   value={newEpisode.season_id}
                   onChange={(event) =>
@@ -771,15 +771,15 @@ function TitleEditor({
                   }
                   style={{ marginRight: "0.5rem" }}
                 >
-                  <option value="">Season</option>
+                  <option value="">Сезон</option>
                   {seasons.map((season) => (
                     <option key={season.id} value={season.id}>
-                      Season {season.season_number}
+                      Сезон {season.season_number}
                     </option>
                   ))}
                 </select>
                 <input
-                  placeholder="Episode #"
+                  placeholder="Эпизод №"
                   value={newEpisode.episode_number}
                   onChange={(event) =>
                     setNewEpisode((prev) => ({
@@ -790,7 +790,7 @@ function TitleEditor({
                   style={{ marginRight: "0.5rem", width: "90px" }}
                 />
                 <input
-                  placeholder="Episode name"
+                  placeholder="Название эпизода"
                   value={newEpisode.name}
                   onChange={(event) =>
                     setNewEpisode((prev) => ({ ...prev, name: event.target.value }))
@@ -806,7 +806,7 @@ function TitleEditor({
                   style={{ marginRight: "0.5rem" }}
                 />
                 <button type="button" onClick={handleEpisodeCreate}>
-                  Create episode
+                  Создать эпизод
                 </button>
               </div>
 
@@ -814,7 +814,7 @@ function TitleEditor({
                 <div
                   style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}
                 >
-                  <h3>Edit episode</h3>
+                  <h3>Редактировать эпизод</h3>
                   <input
                     value={editEpisode.name}
                     onChange={(event) =>
@@ -835,7 +835,7 @@ function TitleEditor({
                     style={{ marginRight: "0.5rem" }}
                   />
                   <input
-                    placeholder="Description"
+                    placeholder="Описание"
                     value={editEpisode.description ?? ""}
                     onChange={(event) =>
                       setEditEpisode((prev) =>
@@ -845,14 +845,14 @@ function TitleEditor({
                     style={{ marginRight: "0.5rem", width: "240px" }}
                   />
                   <button type="button" onClick={handleEpisodeSave}>
-                    Save episode
+                    Сохранить эпизод
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditEpisode(null)}
                     style={{ marginLeft: "0.5rem" }}
                   >
-                    Cancel
+                    Отмена
                   </button>
                 </div>
               )}
@@ -864,10 +864,10 @@ function TitleEditor({
                     style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}
                   >
                     <h4>
-                      Season {season.season_number} {season.name ? `· ${season.name}` : ""}
+                      Сезон {season.season_number} {season.name ? `· ${season.name}` : ""}
                     </h4>
                     {season.episodes.length === 0 && (
-                      <p style={{ color: "#6b7280" }}>No episodes yet.</p>
+                      <p style={{ color: "#6b7280" }}>Эпизодов пока нет.</p>
                     )}
                     {season.episodes.map((episode) => (
                       <div
@@ -885,19 +885,19 @@ function TitleEditor({
                             E{episode.episode_number}: {episode.name}
                           </strong>
                           <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                            Air: {episode.air_date ?? "n/a"} · Published:{" "}
-                            {episode.published_at ? "yes" : "no"}
+                            Премьера: {episode.air_date ?? "нет"} · Опубликован:{" "}
+                            {episode.published_at ? "да" : "нет"}
                           </div>
                         </div>
                         <div style={{ display: "flex", gap: "0.5rem" }}>
                           <button type="button" onClick={() => setEditEpisode(episode)}>
-                            Edit
+                            Редактировать
                           </button>
                           <button
                             type="button"
                             onClick={() => handleEpisodePublish(episode.id)}
                           >
-                            Publish
+                            Опубликовать
                           </button>
                         </div>
                       </div>
@@ -986,7 +986,7 @@ function TitleVariants({
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-        <h3>Create variant</h3>
+        <h3>Создать вариант</h3>
         <select
           value={newVariant.episode_id}
           onChange={(event) =>
@@ -994,10 +994,10 @@ function TitleVariants({
           }
           style={{ marginRight: "0.5rem" }}
         >
-          <option value="">Movie variant</option>
+          <option value="">Вариант фильма</option>
           {episodes.map((episode) => (
             <option key={episode.id} value={episode.id}>
-              Episode {episode.episode_number}: {episode.name}
+              Эпизод {episode.episode_number}: {episode.name}
             </option>
           ))}
         </select>
@@ -1008,7 +1008,7 @@ function TitleVariants({
           }
           style={{ marginRight: "0.5rem" }}
         >
-          <option value="">Audio</option>
+          <option value="">Аудио</option>
           {audioTracks.map((track) => (
             <option key={track.id} value={track.id}>
               {track.name} ({track.code})
@@ -1022,7 +1022,7 @@ function TitleVariants({
           }
           style={{ marginRight: "0.5rem" }}
         >
-          <option value="">Quality</option>
+          <option value="">Качество</option>
           {qualities.map((quality) => (
             <option key={quality.id} value={quality.id}>
               {quality.name} ({quality.height}p)
@@ -1036,19 +1036,19 @@ function TitleVariants({
           }
           style={{ marginRight: "0.5rem" }}
         >
-          <option value="pending">pending</option>
-          <option value="ready">ready</option>
-          <option value="failed">failed</option>
-          <option value="uploading">uploading</option>
+          <option value="pending">ожидает</option>
+          <option value="ready">готов</option>
+          <option value="failed">ошибка</option>
+          <option value="uploading">загрузка</option>
         </select>
         <button type="button" onClick={handleCreate}>
-          Create variant
+          Создать вариант
         </button>
       </div>
 
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-        <h3>Variants</h3>
-        {variants.length === 0 && <p style={{ color: "#6b7280" }}>No variants yet.</p>}
+        <h3>Варианты</h3>
+        {variants.length === 0 && <p style={{ color: "#6b7280" }}>Вариантов пока нет.</p>}
         {variants.map((variant) => {
           const audio = audioMap.get(variant.audio_id);
           const quality = qualityMap.get(variant.quality_id);
@@ -1064,14 +1064,14 @@ function TitleVariants({
             >
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <strong>
-                  {variant.episode_id ? `Episode ${variant.episode_id}` : "Movie"} ·{" "}
-                  {audio ? `${audio.name} (${audio.code})` : `Audio ${variant.audio_id}`} ·{" "}
+                  {variant.episode_id ? `Эпизод ${variant.episode_id}` : "Фильм"} ·{" "}
+                  {audio ? `${audio.name} (${audio.code})` : `Аудио ${variant.audio_id}`} ·{" "}
                   {quality ? `${quality.name} (${quality.height}p)` : `Q ${variant.quality_id}`}
                 </strong>
                 <span>{variant.status}</span>
               </div>
               <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                Telegram file: {variant.telegram_file_id ?? "not uploaded"}
+                Файл Telegram: {variant.telegram_file_id ?? "не загружен"}
               </div>
               <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
                 <code style={{ background: "#f3f4f6", padding: "0.2rem 0.4rem" }}>
@@ -1081,7 +1081,7 @@ function TitleVariants({
                   type="button"
                   onClick={() => navigator.clipboard.writeText(variant.expected_filename)}
                 >
-                  Copy
+                  Копировать
                 </button>
               </div>
               <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
@@ -1121,31 +1121,31 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
 
   return (
     <section>
-      <h2>Variants</h2>
+      <h2>Варианты</h2>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <input
-          placeholder="Title ID"
+          placeholder="ID тайтла"
           value={filters.title_id}
           onChange={(event) =>
             setFilters((prev) => ({ ...prev, title_id: event.target.value }))
           }
         />
         <input
-          placeholder="Episode ID"
+          placeholder="ID эпизода"
           value={filters.episode_id}
           onChange={(event) =>
             setFilters((prev) => ({ ...prev, episode_id: event.target.value }))
           }
         />
         <input
-          placeholder="Status"
+          placeholder="Статус"
           value={filters.status}
           onChange={(event) =>
             setFilters((prev) => ({ ...prev, status: event.target.value }))
           }
         />
         <button type="button" onClick={load}>
-          Apply
+          Применить
         </button>
       </div>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
@@ -1161,13 +1161,13 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
           >
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <strong>
-                Variant #{variant.id} · {variant.episode_id ? "Episode" : "Movie"}{" "}
+                Вариант #{variant.id} · {variant.episode_id ? "Эпизод" : "Фильм"}{" "}
                 {variant.episode_id ?? variant.title_id}
               </strong>
               <span>{variant.status}</span>
             </div>
             <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-              Telegram file: {variant.telegram_file_id ?? "not uploaded"}
+              Файл Telegram: {variant.telegram_file_id ?? "не загружен"}
             </div>
             <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
               <code style={{ background: "#f3f4f6", padding: "0.2rem 0.4rem" }}>
@@ -1177,7 +1177,7 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
                 type="button"
                 onClick={() => navigator.clipboard.writeText(variant.expected_filename)}
               >
-                Copy
+                Копировать
               </button>
             </div>
           </div>
@@ -1227,18 +1227,18 @@ function JobsView({ api, onError }: { api: any; onError: (msg: string) => void }
 
   return (
     <section>
-      <h2>Upload Jobs</h2>
+      <h2>Задания загрузки</h2>
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <input
-          placeholder="Status"
+          placeholder="Статус"
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value)}
         />
         <button type="button" onClick={load}>
-          Filter
+          Фильтр
         </button>
         <button type="button" onClick={handleRescan}>
-          Rescan ingest
+          Пересканировать ingest
         </button>
       </div>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
@@ -1254,20 +1254,20 @@ function JobsView({ api, onError }: { api: any; onError: (msg: string) => void }
           >
             <div style={{ display: "flex", justifyContent: "space-between" }}>
               <strong>
-                Job #{job.id} · Variant {job.variant_id}
+                Задание #{job.id} · Вариант {job.variant_id}
               </strong>
               <span>{job.status}</span>
             </div>
             <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-              Attempts: {job.attempts} · Path: {job.local_path}
+              Попыток: {job.attempts} · Путь: {job.local_path}
             </div>
             {job.last_error && (
               <div style={{ color: "#b91c1c", fontSize: "0.85rem" }}>
-                Last error: {job.last_error}
+                Последняя ошибка: {job.last_error}
               </div>
             )}
             <button type="button" onClick={() => handleRetry(job.id)}>
-              Retry
+              Повторить
             </button>
           </div>
         ))}
@@ -1325,23 +1325,23 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
 
   return (
     <section>
-      <h2>Audio Tracks</h2>
+      <h2>Аудиодорожки</h2>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-        <h3>Create track</h3>
+        <h3>Создать дорожку</h3>
         <input
-          placeholder="Name"
+          placeholder="Название"
           value={newTrack.name}
           onChange={(event) => setNewTrack((prev) => ({ ...prev, name: event.target.value }))}
           style={{ marginRight: "0.5rem" }}
         />
         <input
-          placeholder="Code"
+          placeholder="Код"
           value={newTrack.code}
           onChange={(event) => setNewTrack((prev) => ({ ...prev, code: event.target.value }))}
           style={{ marginRight: "0.5rem" }}
         />
         <button type="button" onClick={handleCreate}>
-          Create
+          Создать
         </button>
       </div>
       {editTrack && (
@@ -1353,7 +1353,7 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
             marginTop: "1rem",
           }}
         >
-          <h3>Edit track</h3>
+          <h3>Редактировать дорожку</h3>
           <input
             value={editTrack.name}
             onChange={(event) =>
@@ -1378,10 +1378,10 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
                 )
               }
             />
-            Active
+            Активна
           </label>
           <button type="button" onClick={handleSave}>
-            Save
+            Сохранить
           </button>
         </div>
       )}
@@ -1399,11 +1399,11 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
             <div>
               <strong>{track.name}</strong> · {track.code}
               <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                {track.is_active ? "Active" : "Disabled"}
+                {track.is_active ? "Активна" : "Отключена"}
               </div>
             </div>
             <button type="button" onClick={() => setEditTrack(track)}>
-              Edit
+              Редактировать
             </button>
           </div>
         ))}
@@ -1461,11 +1461,11 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
 
   return (
     <section>
-      <h2>Qualities</h2>
+      <h2>Качества</h2>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-        <h3>Create quality</h3>
+        <h3>Создать качество</h3>
         <input
-          placeholder="Name"
+          placeholder="Название"
           value={newQuality.name}
           onChange={(event) =>
             setNewQuality((prev) => ({ ...prev, name: event.target.value }))
@@ -1473,7 +1473,7 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
           style={{ marginRight: "0.5rem" }}
         />
         <input
-          placeholder="Height"
+          placeholder="Высота"
           value={newQuality.height}
           onChange={(event) =>
             setNewQuality((prev) => ({ ...prev, height: event.target.value }))
@@ -1481,7 +1481,7 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
           style={{ marginRight: "0.5rem" }}
         />
         <button type="button" onClick={handleCreate}>
-          Create
+          Создать
         </button>
       </div>
       {editQuality && (
@@ -1493,7 +1493,7 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
             marginTop: "1rem",
           }}
         >
-          <h3>Edit quality</h3>
+          <h3>Редактировать качество</h3>
           <input
             value={editQuality.name}
             onChange={(event) =>
@@ -1520,10 +1520,10 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
                 )
               }
             />
-            Active
+            Активна
           </label>
           <button type="button" onClick={handleSave}>
-            Save
+            Сохранить
           </button>
         </div>
       )}
@@ -1541,11 +1541,11 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
             <div>
               <strong>{quality.name}</strong> · {quality.height}p
               <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                {quality.is_active ? "Active" : "Disabled"}
+                {quality.is_active ? "Активно" : "Отключено"}
               </div>
             </div>
             <button type="button" onClick={() => setEditQuality(quality)}>
-              Edit
+              Редактировать
             </button>
           </div>
         ))}
@@ -1573,7 +1573,7 @@ function UsersView({ api, onError }: { api: any; onError: (msg: string) => void 
       );
       setUsers(data.items);
     } catch (err: any) {
-      onError(err.message ?? "Failed to load users");
+      onError(err.message ?? "Не удалось загрузить пользователей");
     } finally {
       setLoading(false);
     }
@@ -1589,7 +1589,7 @@ function UsersView({ api, onError }: { api: any; onError: (msg: string) => void 
       await api.post(`/admin/users/${userId}/premium/grant`, { days, reason });
       await load();
     } catch (err: any) {
-      onError(err.message ?? "Failed to grant premium");
+      onError(err.message ?? "Не удалось выдать премиум");
     }
   };
 
@@ -1606,7 +1606,7 @@ function UsersView({ api, onError }: { api: any; onError: (msg: string) => void 
       await api.post(`/admin/users/${userId}/premium/grant`, { days, reason });
       await load();
     } catch (err: any) {
-      onError(err.message ?? "Failed to grant premium");
+      onError(err.message ?? "Не удалось выдать премиум");
     }
   };
 
@@ -1616,32 +1616,32 @@ function UsersView({ api, onError }: { api: any; onError: (msg: string) => void 
       await api.post(`/admin/users/${userId}/premium/revoke`, { reason });
       await load();
     } catch (err: any) {
-      onError(err.message ?? "Failed to revoke premium");
+      onError(err.message ?? "Не удалось отозвать премиум");
     }
   };
 
   return (
     <section>
-      <h2 style={{ marginTop: 0 }}>Users</h2>
+      <h2 style={{ marginTop: 0 }}>Пользователи</h2>
       <div style={{ display: "flex", gap: "0.75rem", marginBottom: "1rem" }}>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search by TG ID or username"
+          placeholder="Поиск по TG ID или username"
           style={{ padding: "0.5rem", minWidth: "280px" }}
         />
         <button type="button" onClick={() => load()}>
-          Search
+          Найти
         </button>
-        {loading && <span style={{ color: "#6b7280" }}>Loading...</span>}
+        {loading && <span style={{ color: "#6b7280" }}>Загрузка...</span>}
       </div>
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead style={{ background: "#f9fafb" }}>
             <tr>
-              <th style={{ textAlign: "left", padding: "0.75rem" }}>User</th>
-              <th style={{ textAlign: "left", padding: "0.75rem" }}>Premium</th>
-              <th style={{ textAlign: "left", padding: "0.75rem" }}>Actions</th>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>Пользователь</th>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>Премиум</th>
+              <th style={{ textAlign: "left", padding: "0.75rem" }}>Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -1653,33 +1653,33 @@ function UsersView({ api, onError }: { api: any; onError: (msg: string) => void 
                 <tr key={user.id} style={{ borderTop: "1px solid #f3f4f6" }}>
                   <td style={{ padding: "0.75rem" }}>
                     <div style={{ fontWeight: 600 }}>
-                      {user.username || user.first_name || "Unknown"}
+                      {user.username || user.first_name || "Неизвестно"}
                     </div>
                     <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
                       TG ID: {user.tg_user_id}
                     </div>
                   </td>
                   <td style={{ padding: "0.75rem" }}>
-                    <div>{premiumActive ? "Active" : "Not active"}</div>
+                    <div>{premiumActive ? "Активен" : "Не активен"}</div>
                     {user.premium_until && (
                       <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                        Until {new Date(user.premium_until).toLocaleString()}
+                        До {new Date(user.premium_until).toLocaleString()}
                       </div>
                     )}
                   </td>
                   <td style={{ padding: "0.75rem" }}>
                     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                       <button type="button" onClick={() => handleGrant(user.id, 7)}>
-                        Grant +7d
+                        Выдать +7д
                       </button>
                       <button type="button" onClick={() => handleGrant(user.id, 30)}>
-                        Grant +30d
+                        Выдать +30д
                       </button>
                       <button type="button" onClick={() => handleCustomGrant(user.id)}>
-                        Custom days
+                        Свои дни
                       </button>
                       <button type="button" onClick={() => handleRevoke(user.id)}>
-                        Revoke
+                        Отозвать
                       </button>
                     </div>
                   </td>
@@ -1708,7 +1708,7 @@ function ReferralsView({ api, onError }: { api: any; onError: (msg: string) => v
       setReferrals(referralsData.items);
       setRewards(rewardsData.items);
     } catch (err: any) {
-      onError(err.message ?? "Failed to load referrals");
+      onError(err.message ?? "Не удалось загрузить рефералов");
     } finally {
       setLoading(false);
     }
@@ -1720,27 +1720,27 @@ function ReferralsView({ api, onError }: { api: any; onError: (msg: string) => v
 
   return (
     <section>
-      <h2 style={{ marginTop: 0 }}>Referrals</h2>
-      {loading && <div style={{ color: "#6b7280" }}>Loading...</div>}
+      <h2 style={{ marginTop: 0 }}>Рефералы</h2>
+      {loading && <div style={{ color: "#6b7280" }}>Загрузка...</div>}
       <div style={{ marginBottom: "1.5rem" }}>
-        <h3>Recent Referrals</h3>
+        <h3>Последние рефералы</h3>
         <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead style={{ background: "#f9fafb" }}>
               <tr>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referrer</th>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referred</th>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Created</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Реферер</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Приглашённый</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Создано</th>
               </tr>
             </thead>
             <tbody>
               {referrals.map((ref) => (
                 <tr key={ref.id} style={{ borderTop: "1px solid #f3f4f6" }}>
                   <td style={{ padding: "0.75rem" }}>
-                    {ref.referrer_username || "Unknown"} (TG {ref.referrer_tg_user_id})
+                    {ref.referrer_username || "Неизвестно"} (TG {ref.referrer_tg_user_id})
                   </td>
                   <td style={{ padding: "0.75rem" }}>
-                    {ref.referred_username || "Unknown"} (TG {ref.referred_tg_user_id})
+                    {ref.referred_username || "Неизвестно"} (TG {ref.referred_tg_user_id})
                   </td>
                   <td style={{ padding: "0.75rem" }}>
                     {ref.created_at ? new Date(ref.created_at).toLocaleString() : "—"}
@@ -1752,34 +1752,34 @@ function ReferralsView({ api, onError }: { api: any; onError: (msg: string) => v
         </div>
       </div>
       <div>
-        <h3>Referral Rewards</h3>
+        <h3>Награды за рефералов</h3>
         <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead style={{ background: "#f9fafb" }}>
               <tr>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referrer</th>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Referred</th>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Days</th>
-                <th style={{ textAlign: "left", padding: "0.75rem" }}>Status</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Реферер</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Приглашённый</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Дней</th>
+                <th style={{ textAlign: "left", padding: "0.75rem" }}>Статус</th>
               </tr>
             </thead>
             <tbody>
               {rewards.map((reward) => (
                 <tr key={reward.id} style={{ borderTop: "1px solid #f3f4f6" }}>
                   <td style={{ padding: "0.75rem" }}>
-                    {reward.referrer_username || "Unknown"} (TG {reward.referrer_tg_user_id})
+                    {reward.referrer_username || "Неизвестно"} (TG {reward.referrer_tg_user_id})
                   </td>
                   <td style={{ padding: "0.75rem" }}>
-                    {reward.referred_username || "Unknown"} (TG {reward.referred_tg_user_id})
+                    {reward.referred_username || "Неизвестно"} (TG {reward.referred_tg_user_id})
                   </td>
                   <td style={{ padding: "0.75rem" }}>{reward.reward_days}</td>
                   <td style={{ padding: "0.75rem" }}>
-                    {reward.applied ? "Applied" : "Pending"}
+                    {reward.applied ? "Зачислено" : "Ожидает"}
                     <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
                       {reward.applied_at
-                        ? `Applied at ${new Date(reward.applied_at).toLocaleString()}`
+                        ? `Зачислено ${new Date(reward.applied_at).toLocaleString()}`
                         : reward.created_at
-                          ? `Created ${new Date(reward.created_at).toLocaleString()}`
+                          ? `Создано ${new Date(reward.created_at).toLocaleString()}`
                           : ""}
                     </div>
                   </td>
