@@ -52,7 +52,10 @@ const AppLayout = () => {
       {initDataLen === 0 && (
         <div className="main-content" style={{ paddingBottom: 0 }}>
           <div className="card">
-            <p className="meta">Откройте WebApp из Telegram, не из браузера</p>
+            <p className="meta">
+              Не удалось получить initData. Откройте WebApp из Telegram или нажмите
+              “Повторить”.
+            </p>
             <button
               type="button"
               className="button"

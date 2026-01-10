@@ -8,7 +8,8 @@ import React, {
 } from "react";
 import { api } from "../api/client";
 import type { AuthResponse, ReferralInfo, Title } from "../api/types";
-import { useTelegramInitData } from "./telegramInitData";
+import { markAuthFailed, markAuthMissing, markAuthReady, resetAuthGate } from "../api/authGate";
+import { telegramEnv, useTelegramInitData } from "./telegramInitData";
 
 interface UserDataContextValue {
   favorites: Title[];
@@ -35,7 +36,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
   const [premiumActive, setPremiumActive] = useState(false);
   const [referral, setReferral] = useState<ReferralInfo | null>(null);
-  const { initDataLen } = useTelegramInitData();
+  const { initDataLen, initDataSource } = useTelegramInitData();
 
   const refreshFavorites = useCallback(async () => {
     const data = await api.getFavorites();
@@ -62,25 +63,39 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
 
   const refreshAuth = useCallback(async () => {
     if (initDataLen === 0) {
+      markAuthMissing();
       setUser(null);
       setPremiumUntil(null);
       setPremiumActive(false);
       return;
     }
+    resetAuthGate();
     const storedRef =
       typeof window === "undefined" ? null : localStorage.getItem("kina_referral_code");
-    const data = await api.authWebapp(storedRef);
-    setUser(data);
-    setPremiumUntil(data.premium_until);
-    if (data.premium_until) {
-      setPremiumActive(new Date(data.premium_until) > new Date());
-    } else {
-      setPremiumActive(false);
+    try {
+      if (telegramEnv.debugEnabled) {
+        console.info("[tg-auth] sending /api/auth/webapp", {
+          initDataLen,
+          source: initDataSource,
+        });
+      }
+      const data = await api.authWebapp(storedRef);
+      setUser(data);
+      setPremiumUntil(data.premium_until);
+      if (data.premium_until) {
+        setPremiumActive(new Date(data.premium_until) > new Date());
+      } else {
+        setPremiumActive(false);
+      }
+      if (storedRef) {
+        localStorage.removeItem("kina_referral_code");
+      }
+      markAuthReady();
+    } catch (error) {
+      markAuthFailed();
+      throw error;
     }
-    if (storedRef) {
-      localStorage.removeItem("kina_referral_code");
-    }
-  }, [initDataLen]);
+  }, [initDataLen, initDataSource]);
 
   const refreshReferral = useCallback(async () => {
     const data = await api.getReferralMe();
@@ -90,6 +105,8 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   useEffect(() => {
     if (initDataLen > 0) {
       refreshAuth().catch(() => null);
+    } else {
+      markAuthMissing();
     }
   }, [initDataLen, refreshAuth]);
 
