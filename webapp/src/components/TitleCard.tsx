@@ -9,24 +9,25 @@ interface TitleCardProps {
 
 export const TitleCard = ({ title, isFavorite, onToggleFavorite }: TitleCardProps) => {
   return (
-    <div className="title-card">
-      <Link to={`/title/${title.id}`}>
+    <article className="title-card">
+      <Link className="title-card__poster" to={`/title/${title.id}`}>
         <img src={title.poster_url || "/placeholder-poster.svg"} alt={title.name} />
+        <span className="title-card__badge">
+          {title.type === "movie" ? "Фильм" : "Сериал"}
+        </span>
       </Link>
-      <div>
-        <strong>{title.name}</strong>
-        <div className="meta">
-          {title.year || "—"} • {title.type === "movie" ? "Movie" : "Series"}
+      <div className="title-card__body">
+        <div>
+          <strong className="title-card__name">{title.name}</strong>
+          <div className="meta">{title.year || "—"}</div>
         </div>
-      </div>
-      <div className="title-actions">
-        <Link className="button secondary" to={`/title/${title.id}`}>
-          Подробнее
-        </Link>
-        <button className="icon-button" onClick={onToggleFavorite}>
-          {isFavorite ? "⭐" : "☆"}
+        <button className="favorite-toggle" type="button" onClick={onToggleFavorite}>
+          {isFavorite ? "⭐ В избранном" : "☆ В избранное"}
         </button>
       </div>
-    </div>
+      <Link className="button ghost" to={`/title/${title.id}`}>
+        Подробнее
+      </Link>
+    </article>
   );
 };

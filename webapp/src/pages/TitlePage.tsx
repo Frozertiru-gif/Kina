@@ -227,111 +227,126 @@ export const TitlePage = () => {
   return (
     <div className="main-content">
       <div className="inline-actions">
-        <button className="button secondary" onClick={() => navigate(-1)}>
+        <button className="button ghost" onClick={() => navigate(-1)}>
           ← Назад
         </button>
-        {title.type === "series" && (
-          <>
-            <button className="button secondary" onClick={() => goEpisode("prev")}>
-              ◀ Серия
-            </button>
-            <button className="button secondary" onClick={() => goEpisode("next")}>
-              Серия ▶
-            </button>
-          </>
-        )}
       </div>
 
-      <div className="card poster-hero">
+      <section className="card title-hero">
         <img src={title.poster_url || "/placeholder-poster.svg"} alt={title.name} />
-        <div>
-          <h2 className="section-title">{title.name}</h2>
-          <div className="meta">{title.year || "—"}</div>
+        <div className="title-hero__content">
+          <div className="title-hero__meta">
+            <span className="status-pill">{title.type === "movie" ? "Фильм" : "Сериал"}</span>
+            <span className="status-pill">{title.year || "—"}</span>
+          </div>
+          <h2 className="section-title title-hero__title">{title.name}</h2>
           <p className="meta">{title.description || "Описание пока пустое."}</p>
           <div className="inline-actions">
             <button className="icon-button" onClick={() => toggleFavorite(title.id)}>
-              {favoriteIds.has(title.id) ? "⭐" : "☆"} Избранное
+              {favoriteIds.has(title.id) ? "⭐ В избранном" : "☆ В избранное"}
             </button>
             {title.type === "series" && (
               <button className="icon-button" onClick={() => toggleSubscription(title.id)}>
-                {subscriptions.has(title.id) ? "🔔" : "🔕"} Подписка
+                {subscriptions.has(title.id) ? "🔔 Подписка активна" : "🔕 Подписаться"}
               </button>
             )}
           </div>
         </div>
-      </div>
+      </section>
 
       {title.type === "series" && (
-        <div className="card">
-          <h3 className="section-title">Сезоны и серии</h3>
-          <div className="field-row">
-            <select
-              value={selectedSeason}
-              onChange={(event) => setSelectedSeason(Number(event.target.value))}
-            >
-              {title.seasons.map((season) => (
-                <option key={season.id} value={season.season_number}>
-                  Сезон {season.season_number} ({season.episodes_count})
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedEpisodeId ?? ""}
-              onChange={(event) => setSelectedEpisodeId(Number(event.target.value))}
-            >
-              {episodes.map((episode) => (
-                <option key={episode.id} value={episode.id}>
-                  Серия {episode.episode_number} {episode.name ? `· ${episode.name}` : ""}
-                </option>
-              ))}
-            </select>
+        <section className="card">
+          <div className="section-header">
+            <h3 className="section-title">Сезоны и серии</h3>
+            <div className="inline-actions">
+              <button className="button ghost" onClick={() => goEpisode("prev")}>
+                ◀ Пред.
+              </button>
+              <button className="button ghost" onClick={() => goEpisode("next")}>
+                След. ▶
+              </button>
+            </div>
           </div>
-        </div>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Сезон</span>
+              <select
+                value={selectedSeason}
+                onChange={(event) => setSelectedSeason(Number(event.target.value))}
+              >
+                {title.seasons.map((season) => (
+                  <option key={season.id} value={season.season_number}>
+                    Сезон {season.season_number} ({season.episodes_count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">Серия</span>
+              <select
+                value={selectedEpisodeId ?? ""}
+                onChange={(event) => setSelectedEpisodeId(Number(event.target.value))}
+              >
+                {episodes.map((episode) => (
+                  <option key={episode.id} value={episode.id}>
+                    Серия {episode.episode_number} {episode.name ? `· ${episode.name}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </section>
       )}
 
-      <div className="card">
+      <section className="card">
         <h3 className="section-title">Озвучка и качество</h3>
         <div className="field-row">
-          <select
-            value={audioId ?? ""}
-            onChange={(event) => {
-              const nextAudioId = Number(event.target.value);
-              setAudioId(nextAudioId);
-              persistNumber(AUDIO_STORAGE_KEY, nextAudioId);
-              resolveSelection(nextAudioId, qualityId).catch(() => null);
-            }}
-          >
-            {title.available_audio_ids.map((idValue) => (
-              <option key={idValue} value={idValue}>
-                Озвучка {idValue}
-              </option>
-            ))}
-          </select>
-          <select
-            value={qualityId ?? ""}
-            onChange={(event) => {
-              const nextQualityId = Number(event.target.value);
-              setQualityId(nextQualityId);
-              persistNumber(QUALITY_STORAGE_KEY, nextQualityId);
-              resolveSelection(audioId, nextQualityId).catch(() => null);
-            }}
-          >
-            {title.available_quality_ids.map((idValue) => (
-              <option key={idValue} value={idValue}>
-                Качество {idValue}
-              </option>
-            ))}
-          </select>
+          <label className="field">
+            <span className="field-label">Озвучка</span>
+            <select
+              value={audioId ?? ""}
+              onChange={(event) => {
+                const nextAudioId = Number(event.target.value);
+                setAudioId(nextAudioId);
+                persistNumber(AUDIO_STORAGE_KEY, nextAudioId);
+                resolveSelection(nextAudioId, qualityId).catch(() => null);
+              }}
+            >
+              {title.available_audio_ids.map((idValue) => (
+                <option key={idValue} value={idValue}>
+                  Озвучка {idValue}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field-label">Качество</span>
+            <select
+              value={qualityId ?? ""}
+              onChange={(event) => {
+                const nextQualityId = Number(event.target.value);
+                setQualityId(nextQualityId);
+                persistNumber(QUALITY_STORAGE_KEY, nextQualityId);
+                resolveSelection(audioId, nextQualityId).catch(() => null);
+              }}
+            >
+              {title.available_quality_ids.map((idValue) => (
+                <option key={idValue} value={idValue}>
+                  Качество {idValue}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         {resolveStatus && (
-          <div className="meta">
+          <div className="status-pill">
             {resolveStatus === "available" ? "Вариант доступен" : "Вариант недоступен"}
           </div>
         )}
         <button className="button" onClick={handleWatch}>
           {title.type === "series" ? "Смотреть серию" : "Смотреть"}
         </button>
-      </div>
+      </section>
 
       {state.status === "dispatching" && (
         <WatchStatus
