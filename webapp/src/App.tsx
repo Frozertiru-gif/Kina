@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 import { authInfo } from "./api/client";
 import { BottomNav } from "./components/BottomNav";
 import { AdPage } from "./pages/AdPage";
+import { FavoritesPage } from "./pages/FavoritesPage";
 import { HomePage } from "./pages/HomePage";
 import { PremiumPage } from "./pages/PremiumPage";
 import { ProfilePage } from "./pages/ProfilePage";
@@ -45,6 +46,7 @@ const AppLayout = () => {
         <Route path="/" element={<HomePage />} />
         <Route path="/title/:id" element={<TitlePage />} />
         <Route path="/ad" element={<AdPage />} />
+        <Route path="/favorites" element={<FavoritesPage />} />
         <Route path="/premium" element={<PremiumPage />} />
         <Route path="/profile" element={<ProfilePage />} />
       </Routes>

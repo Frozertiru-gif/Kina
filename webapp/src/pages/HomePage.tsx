@@ -12,7 +12,9 @@ export const HomePage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { favorites, favoriteIds, refreshFavorites, toggleFavorite } = useUserData();
+  const { favoriteIds, refreshFavorites, toggleFavorite } = useUserData();
+  const normalizedQuery = searchQuery.trim();
+  const isSearching = normalizedQuery.length > 0;
 
   useEffect(() => {
     refreshFavorites().catch(() => null);
@@ -31,20 +33,20 @@ export const HomePage = () => {
         setLoading(false);
       }
     };
-    if (!searchQuery) {
+    if (!isSearching) {
       loadTop();
     }
-  }, [tab, searchQuery]);
+  }, [tab, isSearching]);
 
   const handleSearch = async () => {
-    if (!searchQuery) {
+    if (!normalizedQuery) {
       setSearchResults([]);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const data = await api.search(searchQuery, tab);
+      const data = await api.search(normalizedQuery, tab);
       setSearchResults(data);
     } catch (err) {
       setError((err as Error).message);
@@ -62,35 +64,70 @@ export const HomePage = () => {
 
   return (
     <div className="main-content">
-      <div className="search-bar">
-        <input
-          placeholder="Поиск фильмов и сериалов"
-          value={searchQuery}
-          onChange={(event) => setSearchQuery(event.target.value)}
-        />
-        <button className="button secondary" onClick={handleSearch}>
+      <section className="hero-card">
+        <div>
+          <span className="status-pill">Kina · Telegram WebApp</span>
+          <h2 className="hero-title">Смотри кино и сериалы без лишних шагов</h2>
+          <p className="meta">
+            Ищи новинки, добавляй в избранное и запускай просмотр прямо в чате.
+          </p>
+        </div>
+      </section>
+
+      <section className="search-panel">
+        <div className="search-input">
+          <input
+            placeholder="Поиск фильмов и сериалов"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                handleSearch();
+              }
+            }}
+          />
+          {searchQuery && (
+            <button
+              className="icon-button ghost"
+              type="button"
+              onClick={() => {
+                setSearchQuery("");
+                setSearchResults([]);
+                setError(null);
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+        <button className="button" onClick={handleSearch}>
           Найти
         </button>
-      </div>
+      </section>
 
-      <div className="card">
+      <section className="card">
         <div className="tab-row">
           <button
             className={`tab ${tab === "movie" ? "active" : ""}`}
             onClick={() => setTab("movie")}
           >
-            Movies
+            Фильмы
           </button>
           <button
             className={`tab ${tab === "series" ? "active" : ""}`}
             onClick={() => setTab("series")}
           >
-            Series
+            Сериалы
           </button>
         </div>
         <h2 className="section-title">
-          {searchQuery ? "Результаты поиска" : "Топ недели"}
+          {isSearching ? "Результаты поиска" : "Популярное"}
         </h2>
+        <p className="meta">
+          {isSearching
+            ? `По запросу “${normalizedQuery}”`
+            : "Собрали топовые тайтлы за неделю."}
+        </p>
         {loading && <div className="notice">Загружаем каталог...</div>}
         {error && <div className="notice">Ошибка: {error}</div>}
         {!loading && !visibleTitles.length && (
@@ -106,22 +143,8 @@ export const HomePage = () => {
             />
           ))}
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <h2 className="section-title">Избранное</h2>
-        {favorites.length === 0 && <div className="notice">Пока пусто.</div>}
-        <div className="title-grid">
-          {favorites.map((title) => (
-            <TitleCard
-              key={title.id}
-              title={title}
-              isFavorite={favoriteIds.has(title.id)}
-              onToggleFavorite={() => toggleFavorite(title.id)}
-            />
-          ))}
-        </div>
-      </div>
     </div>
   );
 };

@@ -5,15 +5,15 @@ export const BottomNav = () => {
     <nav className="bottom-nav">
       <NavLink to="/" end>
         <span>🏠</span>
-        <span>Home</span>
+        <span>Главная</span>
       </NavLink>
       <NavLink to="/premium">
         <span>💎</span>
         <span>Premium</span>
       </NavLink>
-      <NavLink to="/profile">
-        <span>👤</span>
-        <span>Profile</span>
+      <NavLink to="/favorites">
+        <span>⭐</span>
+        <span>Избранное</span>
       </NavLink>
     </nav>
   );

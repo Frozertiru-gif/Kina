@@ -43,6 +43,18 @@ npm install
 npm run build
 ```
 
+## WebApp (Telegram) build
+The production bundle is generated into `webapp/dist` from `webapp/src`.
+
+```bash
+cd webapp
+npm install
+npm run build
+```
+
+After the build completes, deploy the contents of `webapp/dist` (Nginx already serves it in
+`webapp/Dockerfile`).
+
 ### Admin auth
 Set the following env vars:
 - `ADMIN_SERVICE_TOKEN` (token for `X-Admin-Token`, falls back to `SERVICE_TOKEN` if unset)
