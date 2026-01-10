@@ -23,7 +23,10 @@ async def main() -> None:
     redis = get_redis(settings.redis_url)
 
     dispatcher.include_router(build_router(settings, session_maker, redis))
-    await _set_menu_button(bot, settings.webapp_url)
+    try:
+        await _set_menu_button(bot, settings.webapp_url)
+    except NameError:
+        logger.warning("Menu button helper is not defined; skipping", exc_info=True)
     worker_task = asyncio.create_task(
         run_queue_worker(bot, settings, session_maker, redis),
         name="queue-worker",
