@@ -66,7 +66,14 @@ class Title(Base):
     __tablename__ = "titles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    type: Mapped[TitleType] = mapped_column(Enum(TitleType, name="title_type"), nullable=False)
+    type: Mapped[TitleType] = mapped_column(
+        Enum(
+            TitleType,
+            name="title_type",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     original_name: Mapped[str | None] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text)
