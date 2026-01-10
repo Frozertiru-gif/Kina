@@ -1,4 +1,6 @@
 from functools import lru_cache
+import logging
+
 from pydantic import BaseSettings, Field
 
 
@@ -7,6 +9,7 @@ class Settings(BaseSettings):
     telegram_storage_chat_id: int = Field(-1000000000000, alias="TELEGRAM_STORAGE_CHAT_ID")
     telegram_api_base_url: str = Field("http://telegram-bot-api:8081", alias="TELEGRAM_API_BASE_URL")
     telegram_file_api_base_url: str = Field("http://telegram-bot-api:8081/file", alias="TELEGRAM_FILE_API_BASE_URL")
+    log_level: int = Field(logging.INFO, alias="LOG_LEVEL")
     redis_url: str = Field("redis://redis:6379/0", alias="REDIS_URL")
     database_url: str = Field(
         "postgresql+asyncpg://kina:change_me@postgres:5432/kina",
