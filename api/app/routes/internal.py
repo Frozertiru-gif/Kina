@@ -150,7 +150,6 @@ async def toggle_favorite_internal(
     _: None = Depends(get_service_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    variant_id = variant.id
     user = await _get_or_create_user(session, payload.tg_user_id)
     result = await session.execute(
         select(Favorite).where(
@@ -249,7 +248,7 @@ async def watch_request_internal(
 
     return {
         "mode": mode,
-        "variant_id": variant_id,
+        "variant_id": variant.id,
         "title_id": payload.title_id,
         "episode_id": payload.episode_id,
     }
