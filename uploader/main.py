@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     upload_archive_dir: str | None = None
     upload_failed_dir: str | None = None
     upload_poll_seconds: int = 3
-    upload_max_retries: int = 5
+    upload_max_retries: int = 3
     upload_backoff_seconds: int = 10
     upload_max_concurrent: int = 1
     upload_max_file_mb: int = 2000
@@ -158,6 +158,28 @@ EPISODE_PATTERN = re.compile(r"^ep_(\d+)__a_(\d+)__q_(\d+)\.[^.]+$")
 
 
 logger = logging.getLogger("kina.uploader")
+
+
+class UploadError(RuntimeError):
+    def __init__(self, code: str, retryable: bool) -> None:
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+
+
+def _classify_telegram_error(description: str) -> tuple[str, bool]:
+    lowered = description.lower()
+    if "file too large" in lowered or "file is too big" in lowered or "file_too_large" in lowered:
+        return ("FILE_TOO_LARGE", False)
+    if "chat not found" in lowered or "chat_not_found" in lowered:
+        return ("CHAT_NOT_FOUND", False)
+    if "bot was blocked" in lowered or "bot blocked" in lowered or "bot_blocked" in lowered:
+        return ("BOT_BLOCKED", False)
+    if "forbidden" in lowered:
+        return ("FORBIDDEN", False)
+    if "codec" in lowered or "unsupported" in lowered or "invalid" in lowered:
+        return ("INVALID_CODEC", False)
+    return ("TELEGRAM_ERROR", False)
 
 
 async def _log_audit_event(
@@ -456,8 +478,8 @@ async def handle_job(
                 error="variant_missing",
                 variant_status="failed",
             )
-        await move_to_failed(file_path, failed_dir, reason="variant_missing")
-        return
+            await move_to_failed(file_path, failed_dir, reason="variant_missing")
+            return
         variant.status = "uploading"
         await session.commit()
 
@@ -467,6 +489,18 @@ async def handle_job(
             variant_id=job.variant_id,
             file_path=file_path,
         )
+    except UploadError as exc:
+        await handle_upload_error(
+            settings=settings,
+            session_factory=session_factory,
+            job=job,
+            variant_id=job.variant_id,
+            file_path=file_path,
+            failed_dir=failed_dir,
+            error=exc.code,
+            retryable=exc.retryable,
+        )
+        return
     except Exception as exc:
         await handle_upload_error(
             settings=settings,
@@ -476,6 +510,7 @@ async def handle_job(
             file_path=file_path,
             failed_dir=failed_dir,
             error=str(exc),
+            retryable=False,
         )
         return
 
@@ -543,9 +578,10 @@ async def handle_upload_error(
     file_path: Path,
     failed_dir: Path | None,
     error: str,
+    retryable: bool,
 ) -> None:
     attempts = job.attempts
-    if attempts >= settings.upload_max_retries:
+    if not retryable or attempts >= settings.upload_max_retries:
         await mark_job_failed(
             session_factory,
             job,
@@ -645,16 +681,32 @@ async def send_video(
     }
 
     timeout = httpx.Timeout(60.0, read=600.0)
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        with file_path.open("rb") as file_handle:
-            files = {"video": (file_path.name, file_handle, mime_type)}
-            response = await client.post(url, data=data, files=files)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            with file_path.open("rb") as file_handle:
+                files = {"video": (file_path.name, file_handle, mime_type)}
+                response = await client.post(url, data=data, files=files)
+    except httpx.TimeoutException as exc:
+        raise UploadError("timeout", True) from exc
+    except httpx.RequestError as exc:
+        raise UploadError("connection_error", True) from exc
 
+    if response.status_code == 429:
+        raise UploadError("HTTP_429", True)
+    if 500 <= response.status_code <= 599:
+        raise UploadError(f"HTTP_{response.status_code}", True)
+    if response.status_code == 403:
+        raise UploadError("FORBIDDEN", False)
     if response.status_code != 200:
-        raise RuntimeError(f"telegram_http_{response.status_code}:{response.text}")
-    payload = response.json()
+        raise UploadError(f"HTTP_{response.status_code}", False)
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise UploadError("invalid_response", False) from exc
     if not payload.get("ok"):
-        raise RuntimeError(f"telegram_error:{payload}")
+        description = payload.get("description") or payload.get("error_description") or str(payload)
+        code, retryable = _classify_telegram_error(description)
+        raise UploadError(code, retryable)
     result = payload.get("result") or {}
     message_id = result.get("message_id")
     video = result.get("video") or {}

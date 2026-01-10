@@ -37,13 +37,11 @@ async def resolve_watch_variant(
     quality_id: int | None,
 ) -> ResolveResult:
     state = await session.get(UserState, user_id)
-    if state is None:
-        state = UserState(user_id=user_id)
-        session.add(state)
-        await session.flush()
+    preferred_audio_id = state.preferred_audio_id if state else None
+    preferred_quality_id = state.preferred_quality_id if state else None
 
-    resolved_audio_id = audio_id or state.preferred_audio_id
-    resolved_quality_id = quality_id or state.preferred_quality_id
+    resolved_audio_id = audio_id or preferred_audio_id
+    resolved_quality_id = quality_id or preferred_quality_id
 
     if resolved_audio_id is None:
         audio_query = (

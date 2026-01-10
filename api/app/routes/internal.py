@@ -16,7 +16,6 @@ from app.models import (
     UploadJob,
     User,
     UserPremium,
-    UserState,
 )
 from app.redis import get_redis, json_set, setnx_with_ttl
 from app.services.rate_limit import rate_limit_response, register_violation
@@ -221,15 +220,6 @@ async def watch_request_internal(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
 
     user = await _get_or_create_user(session, payload.tg_user_id)
-    state = await session.get(UserState, user.id)
-    if state is None:
-        state = UserState(user_id=user.id)
-        session.add(state)
-    state.preferred_audio_id = payload.audio_id
-    state.preferred_quality_id = payload.quality_id
-    state.last_title_id = payload.title_id
-    state.last_episode_id = payload.episode_id
-    await session.commit()
 
     premium_until = await _get_premium_until(session, payload.tg_user_id)
     premium_active = is_premium_active(premium_until)
@@ -247,6 +237,7 @@ async def watch_request_internal(
     }
     await json_set(watchctx_key, 600, watch_ctx)
 
+    variant_id = variant.id
     return {
         "mode": mode,
         "variant_id": variant_id,
