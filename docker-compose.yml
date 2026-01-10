@@ -67,16 +67,19 @@ services:
       - ./data/archive:/data/archive
       - ./data/failed:/data/failed
 
+  webapp:
+    build: ./webapp
+
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"
     volumes:
       - ./infra/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./infra/webapp:/usr/share/nginx/html:ro
       - ./infra/admin:/usr/share/nginx/admin:ro
     depends_on:
       - api
+      - webapp
 
   migrations:
     build: ./api
