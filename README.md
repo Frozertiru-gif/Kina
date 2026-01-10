@@ -1,42 +1,42 @@
 # Kina Mono-Repo
 
-Production-grade mono-repo skeleton for API, Telegram bot, uploader service, and web/admin apps.
+Продакшен-готовый монорепозиторий для API, Telegram-бота, сервиса загрузчика и веб/админ приложений.
 
-## Stack
+## Стек
 - Python 3.11+, FastAPI, aiogram 3.x
 - PostgreSQL, Redis
-- React + Vite (WebApp and Admin)
+- React + Vite (WebApp и Admin)
 - Docker, docker-compose, Nginx
 
-## Quick Start (Docker)
-1. Copy environment file and fill values:
+## Быстрый старт (Docker)
+1. Скопируйте файл окружения и заполните значения:
    ```bash
    cp .env.example .env
    ```
-   Ensure `DATABASE_URL` is set (required).
-2. Start services:
+   Убедитесь, что `DATABASE_URL` задан (обязательно).
+2. Запустите сервисы:
    ```bash
    docker compose up --build
    ```
-3. Apply migrations:
+3. Примените миграции:
    ```bash
    docker compose exec api alembic -c /api/alembic.ini upgrade head
    ```
-4. Seed initial data:
+4. Заполните базовые данные:
    ```bash
    docker compose exec api python /api/scripts/seed.py
    ```
 
-## Local URLs
+## Локальные адреса
 - http://localhost/ (webapp)
 - http://localhost/admin/ (admin)
 - http://localhost/api/health (api)
 
 ## Admin UI + API
-- Open admin UI: http://localhost/admin/
-- Admin API base: http://localhost/api/admin
+- Открыть админку: http://localhost/admin/
+- База Admin API: http://localhost/api/admin
 
-Build admin static assets for Nginx:
+Сборка статических файлов админки для Nginx:
 ```bash
 cd admin
 npm install
@@ -44,7 +44,7 @@ npm run build
 ```
 
 ## WebApp (Telegram) build
-The production bundle is generated into `webapp/dist` from `webapp/src`.
+Продакшен-бандл генерируется в `webapp/dist` из `webapp/src`.
 
 ```bash
 cd webapp
@@ -52,68 +52,68 @@ npm install
 npm run build
 ```
 
-After the build completes, deploy the contents of `webapp/dist` (Nginx already serves it in
+После сборки разверните содержимое `webapp/dist` (Nginx уже раздает его в
 `webapp/Dockerfile`).
 
-### Admin auth
-Set the following env vars:
-- `ADMIN_SERVICE_TOKEN` (token for `X-Admin-Token`, falls back to `SERVICE_TOKEN` if unset)
-- `ADMIN_ALLOWLIST` (optional CSV of Telegram user IDs allowed to use admin endpoints)
+### Авторизация админки
+Задайте следующие переменные окружения:
+- `ADMIN_SERVICE_TOKEN` (токен для `X-Admin-Token`, при отсутствии берется `SERVICE_TOKEN`)
+- `ADMIN_ALLOWLIST` (опциональный CSV со списком Telegram user ID, которым разрешен доступ)
 
-If `ADMIN_ALLOWLIST` is set, add header `X-Admin-User-Id` with a value from the allowlist.
+Если `ADMIN_ALLOWLIST` задан, добавьте заголовок `X-Admin-User-Id` со значением из allowlist.
 
-### Admin API curl examples
+### Примеры curl для Admin API
 ```bash
-curl -X GET http://localhost/api/admin/titles?limit=5 \\
+curl -X GET http://localhost/api/admin/titles?limit=5 \
   -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
 
-curl -X POST http://localhost/api/admin/titles \\
-  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
-  -H "Content-Type: application/json" \\
+curl -X POST http://localhost/api/admin/titles \
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"type":"movie","name":"Demo Movie","year":2024}'
 
-curl -X POST http://localhost/api/admin/variants \\
-  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
-  -H "Content-Type: application/json" \\
+curl -X POST http://localhost/api/admin/variants \
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"title_id":1,"audio_id":1,"quality_id":1,"status":"pending"}'
 
-curl -X GET http://localhost/api/admin/upload_jobs?status=failed \\
+curl -X GET http://localhost/api/admin/upload_jobs?status=failed \
   -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
 ```
 
 ## Telegram Bot
-The bot reads Redis queues and sends cards/videos to users. It does not search titles in chat.
+Бот читает очереди Redis и отправляет карточки/видео пользователям. В чате он не ищет тайтлы.
 
-### Required ENV
+### Обязательные переменные окружения
 - `BOT_TOKEN`
 - `REDIS_URL`
 - `DATABASE_URL`
 - `SERVICE_TOKEN`
 - `API_BASE_URL`
 
-### Run bot (Docker)
+### Запуск бота (Docker)
 ```bash
 docker compose up --build bot
 ```
 
-### Redis queues
+### Очереди Redis
 - `send_watch_card_queue` → `{tg_user_id, variant_id, title_id, episode_id, mode}`
 - `send_video_queue` → `{tg_user_id, variant_id}`
 - `send_video_vip_queue` → `{tg_user_id, variant_id}`
 - `notify_queue` → `{tg_user_id, title_id, episode_id, text, variant_id}`
 
-### Subscriptions & notifications
-- Subscribe to series:
-  - WebApp: tap the 🔔 button on a series title page.
-  - Bot: tap 🔔 on a series card.
-- Notifications are sent when an episode variant becomes `ready` **and** the episode has
-  `published_at` set. This lets admins preload uploads before publishing.
-- Deduplication key (Redis): `notif:{tg_user_id}:{episode_id}` (TTL 7 days).
+### Подписки и уведомления
+- Подписка на сериалы:
+  - WebApp: нажмите кнопку 🔔 на странице тайтла.
+  - Bot: нажмите 🔔 на карточке.
+- Уведомления отправляются, когда вариант эпизода становится `ready` **и** у эпизода есть
+  `published_at`. Это позволяет заранее загружать серии перед публикацией.
+- Ключ дедупликации (Redis): `notif:{tg_user_id}:{episode_id}` (TTL 7 дней).
 
 ## API v1 (DEV auth bypass)
-Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or header).
+Установите `ENVIRONMENT=local` и `DEV_AUTH_BYPASS=true` (плюс `DEV_TG_USER_ID` или заголовок).
 
-### Endpoints
+### Эндпоинты
 - GET  /api/health
 - POST /api/auth/webapp
 - GET  /api/catalog/top
@@ -140,112 +140,112 @@ Set `ENVIRONMENT=local` and `DEV_AUTH_BYPASS=true` (plus `DEV_TG_USER_ID` or hea
 - POST /api/internal/uploader/rescan
 - GET  /api/internal/metrics
 
-### Auth (DEV bypass)
+### Авторизация (DEV bypass)
 ```bash
-curl -X POST http://localhost/api/auth/webapp \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/auth/webapp \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"initData": ""}'
 ```
 
 ### Watch request (success)
 ```bash
-curl -X POST http://localhost/api/watch/request \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Init-Data: <telegram_init_data>' \\
+curl -X POST http://localhost/api/watch/request \
+  -H 'Content-Type: application/json' \
+  -H 'X-Init-Data: <telegram_init_data>' \
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
 ```
 
 ### Watch resolve (best variant)
 ```bash
-curl -X POST http://localhost/api/watch/resolve \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Init-Data: <telegram_init_data>' \\
+curl -X POST http://localhost/api/watch/resolve \
+  -H 'Content-Type: application/json' \
+  -H 'X-Init-Data: <telegram_init_data>' \
   -d '{"title_id":1,"episode_id":null,"audio_id":null,"quality_id":null}'
 ```
 
 ### Watch request (variant not found)
 ```bash
-curl -X POST http://localhost/api/watch/request \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Init-Data: <telegram_init_data>' \\
+curl -X POST http://localhost/api/watch/request \
+  -H 'Content-Type: application/json' \
+  -H 'X-Init-Data: <telegram_init_data>' \
   -d '{"title_id":1,"episode_id":null,"audio_id":99,"quality_id":99}'
 ```
 
 ### Watch request (too many requests)
 ```bash
-curl -X POST http://localhost/api/watch/request \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Init-Data: <telegram_init_data>' \\
+curl -X POST http://localhost/api/watch/request \
+  -H 'Content-Type: application/json' \
+  -H 'X-Init-Data: <telegram_init_data>' \
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
 ```
 
 ### Ads flow (DEV bypass)
 ```bash
-curl -X POST http://localhost/api/watch/request \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/watch/request \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
 
-curl -X POST http://localhost/api/ads/start \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/ads/start \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"variant_id":1}'
 
-curl -X POST http://localhost/api/ads/complete \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/ads/complete \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"nonce":"<nonce_from_ads_start>"}'
 
-curl -X POST http://localhost/api/watch/request \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/watch/request \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"title_id":1,"episode_id":null,"audio_id":1,"quality_id":1}'
 
-curl -X POST http://localhost/api/watch/dispatch \\
-  -H 'Content-Type: application/json' \\
-  -H 'X-Dev-User-Id: 123456' \\
+curl -X POST http://localhost/api/watch/dispatch \
+  -H 'Content-Type: application/json' \
+  -H 'X-Dev-User-Id: 123456' \
   -d '{"variant_id":1}'
 ```
 
-## Rate limits (API)
-| Scope | Endpoint | Limit |
+## Лимиты (API)
+| Область | Эндпоинт | Лимит |
 | --- | --- | --- |
-| User | `GET /api/catalog/search` | 10 requests / 10 seconds |
-| User | `POST /api/watch/request` | 20 requests / 60 seconds (plus 2s debounce) |
-| User | `POST /api/ads/start` | 5 requests / 60 seconds |
-| User | `POST /api/ads/complete` | 10 requests / 60 seconds |
-| User | `POST /api/referral/apply` | 2 requests / 24 hours per referred user |
-| Referrer | `POST /api/referral/apply` | 10 requests / 24 hours per referrer |
-| Admin token | `/api/admin/*` | 60 requests / 60 seconds |
-| Service token | `/api/internal/*` | 120 requests / 60 seconds |
+| Пользователь | `GET /api/catalog/search` | 10 запросов / 10 секунд |
+| Пользователь | `POST /api/watch/request` | 20 запросов / 60 секунд (плюс 2с debounce) |
+| Пользователь | `POST /api/ads/start` | 5 запросов / 60 секунд |
+| Пользователь | `POST /api/ads/complete` | 10 запросов / 60 секунд |
+| Пользователь | `POST /api/referral/apply` | 2 запроса / 24 часа на каждого приглашенного |
+| Реферер | `POST /api/referral/apply` | 10 запросов / 24 часа на каждого реферера |
+| Админ токен | `/api/admin/*` | 60 запросов / 60 секунд |
+| Сервисный токен | `/api/internal/*` | 120 запросов / 60 секунд |
 
-## Watch preferences & defaults
-- Stored in `user_state`: `preferred_audio_id`, `preferred_quality_id`, `last_title_id`, `last_episode_id`.
-- The `/api/watch/resolve` endpoint fills missing audio/quality from stored preferences.
-- If still missing, defaults are selected deterministically:
-  - Audio: lowest `audio_id` among active tracks available for the title/episode.
-  - Quality: highest `height` among active qualities available for the title/episode.
+## Предпочтения просмотра и значения по умолчанию
+- Хранятся в `user_state`: `preferred_audio_id`, `preferred_quality_id`, `last_title_id`, `last_episode_id`.
+- `/api/watch/resolve` подставляет отсутствующие audio/quality из сохраненных предпочтений.
+- Если по-прежнему нет значений, выбираются детерминированные дефолты:
+  - Audio: минимальный `audio_id` среди активных дорожек для тайтла/эпизода.
+  - Quality: максимальный `height` среди активных качеств для тайтла/эпизода.
 
-## Bot episode navigation
-- Prev/next picks the adjacent episode by `episode_number` within a season.
-- When at the season edge, it moves across seasons (last episode of previous season or first of next).
+## Навигация по эпизодам в боте
+- Prev/next выбирает соседний эпизод по `episode_number` в пределах сезона.
+- На границе сезона переходит между сезонами (последний эпизод предыдущего сезона или первый следующего).
 
-## Admin user moderation
-Ban/unban users:
+## Модерация пользователей админом
+Бан/разбан пользователей:
 ```bash
-curl -X POST http://localhost/api/admin/users/123/ban \\
-  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \\
-  -H "Content-Type: application/json" \\
+curl -X POST http://localhost/api/admin/users/123/ban \
+  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"reason":"abuse"}'
 
-curl -X POST http://localhost/api/admin/users/123/unban \\
+curl -X POST http://localhost/api/admin/users/123/unban \
   -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
 ```
 
-## Internal metrics
+## Внутренние метрики
 ```bash
-curl -X GET http://localhost/api/internal/metrics \\
+curl -X GET http://localhost/api/internal/metrics \
   -H "X-Service-Token: $SERVICE_TOKEN"
 ```
 
@@ -261,59 +261,59 @@ npm run dev
 docker compose up --build
 ```
 
-## Notes
-- The Nginx container serves placeholder HTML pages for `/` and `/admin/`.
-- Bot startup fails fast when `BOT_TOKEN` is missing.
+## Примечания
+- Контейнер Nginx отдает заглушки HTML для `/` и `/admin/`.
+- Бот при старте падает, если `BOT_TOKEN` не задан.
 
 ## Uploader Service
-Uploader watches the ingest folder, matches files to media variants, uploads them to Telegram
-storage chat, and writes `file_id` + message details into the DB.
+Uploader следит за ingest папкой, сопоставляет файлы с вариантами, загружает их в чат
+хранилища Telegram и сохраняет `file_id` + детали сообщения в БД.
 
-### Required ENV
-- `STORAGE_CHAT_ID` (Telegram storage chat ID)
+### Обязательные переменные окружения
+- `STORAGE_CHAT_ID` (ID чата хранилища в Telegram)
 - `BOT_TOKEN`
 - `DATABASE_URL`
 - `REDIS_URL`
 - `UPLOAD_INGEST_DIR`
 
-### Optional ENV
-- `UPLOAD_ARCHIVE_DIR` (archive uploaded files)
-- `UPLOAD_FAILED_DIR` (move invalid/failed files)
+### Опциональные переменные окружения
+- `UPLOAD_ARCHIVE_DIR` (архивировать загруженные файлы)
+- `UPLOAD_FAILED_DIR` (перемещать некорректные/ошибочные файлы)
 - `UPLOAD_POLL_SECONDS`
 - `UPLOAD_MAX_RETRIES`
 - `UPLOAD_BACKOFF_SECONDS`
 - `UPLOAD_MAX_CONCURRENT`
 - `UPLOAD_MAX_FILE_MB`
-- `USE_LOCAL_BOT_API` (default `true`)
+- `USE_LOCAL_BOT_API` (по умолчанию `true`)
 - `LOCAL_BOT_API_BASE_URL`
 - `TELEGRAM_API_BASE_URL`
 
-### Upload flow
-1. Place file in ingest directory (default `./data/ingest`).
-2. Uploader parses the filename and matches `media_variants`.
-3. Uploader sends video to storage chat via `sendVideo`.
-4. DB is updated with `telegram_file_id`, `storage_message_id`, `storage_chat_id`, and status.
+### Процесс загрузки
+1. Поместите файл в ingest директорию (по умолчанию `./data/ingest`).
+2. Uploader парсит имя файла и сопоставляет `media_variants`.
+3. Uploader отправляет видео в чат хранилища через `sendVideo`.
+4. БД обновляется `telegram_file_id`, `storage_message_id`, `storage_chat_id` и статусом.
 
-### Naming convention
-- Movie: `title_<title_id>__a_<audio_id>__q_<quality_id>.mp4`
-- Episode: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mp4`
+### Схема именования
+- Фильм: `title_<title_id>__a_<audio_id>__q_<quality_id>.mp4`
+- Эпизод: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mp4`
 
-Examples:
+Примеры:
 - `title_12__a_1__q_2.mp4`
 - `ep_345__a_1__q_2.mkv`
 
-### Check uploader jobs
+### Проверка заданий загрузчика
 ```bash
-curl -H \"Authorization: Bearer $SERVICE_TOKEN\" \\
-  \"http://localhost/api/internal/uploader/jobs?status=failed&limit=50\"
+curl -H "Authorization: Bearer $SERVICE_TOKEN" \
+  "http://localhost/api/internal/uploader/jobs?status=failed&limit=50"
 ```
 
-### Trigger rescan
+### Запуск пересканирования
 ```bash
-curl -X POST -H \"Authorization: Bearer $SERVICE_TOKEN\" \\
+curl -X POST -H "Authorization: Bearer $SERVICE_TOKEN" \
   http://localhost/api/internal/uploader/rescan
 ```
 
 ### Local Bot API
-Set `USE_LOCAL_BOT_API=true` and `LOCAL_BOT_API_BASE_URL=http://local-bot-api:8081` to send
-uploads to a local Bot API instance instead of `https://api.telegram.org`.
+Задайте `USE_LOCAL_BOT_API=true` и `LOCAL_BOT_API_BASE_URL=http://local-bot-api:8081`, чтобы
+отправлять загрузки в локальный Bot API вместо `https://api.telegram.org`.
