@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
@@ -42,6 +42,13 @@ def series_keyboard(title_id: int, episode_id: int) -> InlineKeyboardMarkup:
     builder.button(text="Premium", callback_data="open_premium")
     builder.button(text="Скрыть", callback_data="hide")
     builder.adjust(2, 1, 2, 2, 2)
+    return builder.as_markup()
+
+
+def start_keyboard(webapp_url: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📺 Каталог", web_app=WebAppInfo(url=webapp_url))
+    builder.adjust(1)
     return builder.as_markup()
 
 
