@@ -1,13 +1,13 @@
 FROM node:20-alpine AS webapp_build
 WORKDIR /src/webapp
-COPY webapp/package*.json ./
+COPY webapp/package.json webapp/package-lock.json ./
 RUN npm ci
 COPY webapp/ ./
 RUN npm run build
 
 FROM node:20-alpine AS admin_build
 WORKDIR /src/admin
-COPY admin/package*.json ./
+COPY admin/package.json admin/package-lock.json ./
 RUN npm ci
 COPY admin/ ./
 RUN npm run build
