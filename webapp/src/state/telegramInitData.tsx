@@ -43,21 +43,40 @@ const getTelegramWebApp = (): TelegramWebApp | undefined => {
 
 type InitDataSource = "telegram" | "url-search" | "url-hash" | null;
 
+const readRawParamValue = (raw: string, key: string): string => {
+  const query = raw.startsWith("?") ? raw.slice(1) : raw;
+  if (!query) {
+    return "";
+  }
+  const parts = query.split("&");
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    const [rawKey, rawValue = ""] = part.split("=");
+    if (rawKey === key) {
+      try {
+        return decodeURIComponent(rawValue);
+      } catch {
+        return rawValue;
+      }
+    }
+  }
+  return "";
+};
+
 const readInitDataFromUrl = (): { value: string; source: InitDataSource } => {
   if (typeof window === "undefined") {
     return { value: "", source: null };
   }
-  const searchParams = new URLSearchParams(window.location.search);
-  const searchValue = searchParams.get("tgWebAppData");
+  const searchValue = readRawParamValue(window.location.search, "tgWebAppData");
   if (searchValue) {
     return { value: searchValue, source: "url-search" };
   }
   const rawHash = window.location.hash.startsWith("#")
     ? window.location.hash.slice(1)
     : window.location.hash;
-  const hash = rawHash.startsWith("?") ? rawHash.slice(1) : rawHash;
-  const hashParams = new URLSearchParams(hash);
-  const hashValue = hashParams.get("tgWebAppData");
+  const hashValue = readRawParamValue(rawHash, "tgWebAppData");
   if (hashValue) {
     return { value: hashValue, source: "url-hash" };
   }
