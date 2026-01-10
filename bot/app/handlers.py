@@ -89,6 +89,11 @@ def build_router(
 
     @router.message(CommandStart())
     async def on_start(message: Message) -> None:
+        catalog_markup = (
+            keyboards.catalog_keyboard(settings.webapp_url)
+            if settings.webapp_url
+            else None
+        )
         payload = ""
         if message.text:
             parts = message.text.split(maxsplit=1)
@@ -110,11 +115,11 @@ def build_router(
                 },
             )
             if response and response.get("applied"):
-                await message.answer("Реферальный код применён. Спасибо!")
+                await message.answer("Реферальный код применён. Спасибо!", reply_markup=catalog_markup)
             else:
-                await message.answer("Реферальный код не применён.")
+                await message.answer("Реферальный код не применён.", reply_markup=catalog_markup)
         else:
-            await message.answer("Добро пожаловать в Kina!")
+            await message.answer("Добро пожаловать в Kina!", reply_markup=catalog_markup)
         logger.info(
             "start handled",
             extra={
