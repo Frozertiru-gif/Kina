@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
@@ -8,9 +9,15 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import _ensure_not_banned, _parse_init_data, get_db_session
+from app.dependencies import (
+    _ensure_not_banned,
+    _issue_access_token,
+    _parse_init_data,
+    _validate_init_data,
+    get_db_session,
+)
 from app.models import UserPremium
-from app.dependencies import _get_dev_user_id, _is_dev_bypass_allowed, _upsert_user, _validate_init_data
+from app.dependencies import _get_dev_user_id, _is_dev_bypass_allowed, _upsert_user
 from app.services.rate_limit import rate_limit_response, register_violation
 from app.services.referrals import (
     ReferralRateLimitError,
@@ -41,6 +48,9 @@ class WebAppAuthResponse(BaseModel):
     username: str | None
     first_name: str | None
     premium_until: Any | None
+    access_token: str
+    token_type: str
+    expires_in: int
 
 
 async def _get_premium_until(session: AsyncSession, user_id: int) -> Any | None:
@@ -63,14 +73,19 @@ async def auth_webapp(
     if _is_webapp_debug_enabled():
         body_bytes = await request.body() if request else b""
         init_data_source = "body" if payload.initData else "header" if x_init_data else "missing"
-        init_data_preview = init_data[:120] if init_data else ""
+        init_data_preview = init_data or ""
+        masked_preview = re.sub(r"(user=)[^&]*", r"\1<redacted>", init_data_preview)
+        masked_preview = re.sub(r"(hash=)[^&]*", r"\1<redacted>", masked_preview)
+        preview_start = masked_preview[:20]
+        preview_end = masked_preview[-20:] if len(masked_preview) > 20 else masked_preview
         logger.info(
             "auth webapp debug",
             extra={
                 "action": "auth_webapp_debug",
                 "init_data_source": init_data_source,
                 "init_data_len": len(init_data or ""),
-                "init_data_preview": init_data_preview,
+                "init_data_preview_start": preview_start,
+                "init_data_preview_end": preview_end,
                 "content_type": request.headers.get("content-type") if request else None,
                 "body_len": len(body_bytes),
                 "header_init_data_len": len(x_init_data or ""),
@@ -92,27 +107,78 @@ async def auth_webapp(
                 await register_violation(session, tg_user_id)
                 return rate_limit_response(exc.retry_after)
         premium_until = await _get_premium_until(session, user.id)
+        access_token, expires_in = _issue_access_token(user)
         return WebAppAuthResponse(
             id=user.id,
             tg_user_id=user.tg_user_id,
             username=user.username,
             first_name=user.first_name,
             premium_until=premium_until,
+            access_token=access_token,
+            token_type="Bearer",
+            expires_in=expires_in,
         )
 
     if not init_data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="init_data_required")
+        detail = "init_data_required" if _is_webapp_debug_enabled() else "unauthorized"
+        if _is_webapp_debug_enabled():
+            logger.info(
+                "auth webapp rejected",
+                extra={
+                    "action": "auth_webapp_rejected",
+                    "detail": detail,
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                },
+            )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
     bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
-    parsed = (
-        _validate_init_data(init_data, bot_token)
-        if _is_webapp_strict()
-        else _parse_init_data(init_data)
-    )
+    try:
+        parsed = (
+            _validate_init_data(init_data, bot_token)
+            if _is_webapp_strict()
+            else _parse_init_data(init_data)
+        )
+    except HTTPException as exc:
+        if _is_webapp_debug_enabled():
+            logger.info(
+                "auth webapp rejected",
+                extra={
+                    "action": "auth_webapp_rejected",
+                    "detail": exc.detail,
+                    "status_code": exc.status_code,
+                },
+            )
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="unauthorized",
+        ) from exc
     raw_user = parsed.get("user")
     if not raw_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="init_data_user_missing")
+        detail = "init_data_user_missing" if _is_webapp_debug_enabled() else "unauthorized"
+        if _is_webapp_debug_enabled():
+            logger.info(
+                "auth webapp rejected",
+                extra={
+                    "action": "auth_webapp_rejected",
+                    "detail": detail,
+                    "status_code": status.HTTP_401_UNAUTHORIZED,
+                },
+            )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
+    if _is_webapp_debug_enabled():
+        logger.info(
+            "auth webapp parsed",
+            extra={
+                "action": "auth_webapp_parsed",
+                "parsed_keys": sorted(parsed.keys()),
+                "has_user": bool(raw_user),
+                "has_hash": "hash" in parsed,
+                "auth_date": parsed.get("auth_date"),
+            },
+        )
     user_payload = json.loads(raw_user)
     tg_user_id = int(user_payload["id"])
     user = await _upsert_user(
@@ -135,10 +201,14 @@ async def auth_webapp(
             await register_violation(session, tg_user_id)
             return rate_limit_response(exc.retry_after)
     premium_until = await _get_premium_until(session, user.id)
+    access_token, expires_in = _issue_access_token(user)
     return WebAppAuthResponse(
         id=user.id,
         tg_user_id=user.tg_user_id,
         username=user.username,
         first_name=user.first_name,
         premium_until=premium_until,
+        access_token=access_token,
+        token_type="Bearer",
+        expires_in=expires_in,
     )
