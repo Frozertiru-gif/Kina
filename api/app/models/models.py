@@ -335,8 +335,8 @@ class Admin(Base):
     __tablename__ = "admins"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    tg_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
-    role: Mapped[str] = mapped_column(String(50), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
     created_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

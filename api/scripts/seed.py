@@ -107,7 +107,7 @@ async def seed() -> None:
         )
         await session.flush()
 
-        admin = Admin(tg_user_id=0, role="owner", is_active=True)
+        admin = Admin(username="owner", password_hash="seeded", is_active=True)
         session.add(admin)
         await session.flush()
 
