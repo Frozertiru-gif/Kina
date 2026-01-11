@@ -365,7 +365,7 @@ async def scan_ingest(
                 extra={
                     "job_id": job.id,
                     "variant_id": variant.id,
-                    "filename": file_path.name,
+                    "file_path": file_path.name,
                 },
             )
 
@@ -403,7 +403,7 @@ async def worker_loop(
                         "request_id": f"job:{job.id}",
                         "job_id": job.id,
                         "variant_id": job.variant_id,
-                        "filename": job.local_path,
+                        "file_path": job.local_path,
                         "error": str(exc),
                         "attempts": job.attempts,
                         "worker_id": worker_id,
@@ -465,7 +465,7 @@ async def handle_job(
                 "action": "upload_job_file_missing",
                 "request_id": f"job:{job.id}",
                 "job_id": job.id,
-                "filename": job.local_path,
+                "file_path": job.local_path,
             },
         )
         return
@@ -564,7 +564,7 @@ async def handle_job(
             "request_id": f"job:{job.id}",
             "job_id": job.id,
             "variant_id": job.variant_id,
-            "filename": file_path.name,
+            "file_path": file_path.name,
             "message_id": message_id,
         },
     )
@@ -601,7 +601,7 @@ async def handle_upload_error(
             "request_id": f"job:{job.id}",
             "job_id": job.id,
             "variant_id": variant_id,
-            "filename": file_path.name,
+            "file_path": file_path.name,
             "attempts": attempts,
             "backoff": backoff,
             "error": error,
@@ -843,7 +843,7 @@ async def finalize_file(file_path: Path, archive_dir: Path | None) -> None:
 async def move_to_failed(file_path: Path, failed_dir: Path | None, reason: str) -> None:
     logger.warning(
         "move to failed",
-        extra={"filename": file_path.name, "reason": reason},
+        extra={"file_path": file_path.name, "reason": reason},
     )
     if not failed_dir:
         return
