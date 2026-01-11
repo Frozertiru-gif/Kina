@@ -6,7 +6,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { api } from "../api/client";
+import { ApiError, api, getAuthToken, setAuthToken } from "../api/client";
 import type { AuthResponse, ReferralInfo, Title } from "../api/types";
 import { markAuthFailed, markAuthMissing, markAuthReady, resetAuthGate } from "../api/authGate";
 import { telegramEnv, useTelegramInitData } from "./telegramInitData";
@@ -16,6 +16,7 @@ interface UserDataContextValue {
   favoriteIds: Set<number>;
   subscriptions: Set<number>;
   user: AuthResponse | null;
+  authError: string | null;
   premiumUntil: string | null;
   premiumActive: boolean;
   referral: ReferralInfo | null;
@@ -33,6 +34,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   const [favorites, setFavorites] = useState<Title[]>([]);
   const [subscriptions, setSubscriptions] = useState<Set<number>>(new Set());
   const [user, setUser] = useState<AuthResponse | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [premiumUntil, setPremiumUntil] = useState<string | null>(null);
   const [premiumActive, setPremiumActive] = useState(false);
   const [referral, setReferral] = useState<ReferralInfo | null>(null);
@@ -65,11 +67,13 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
     if (initDataLen === 0) {
       markAuthMissing();
       setUser(null);
+      setAuthError("Не удалось получить initData. Откройте WebApp из Telegram.");
       setPremiumUntil(null);
       setPremiumActive(false);
       return;
     }
     resetAuthGate();
+    setAuthError(null);
     const storedRef =
       typeof window === "undefined" ? null : localStorage.getItem("kina_referral_code");
     try {
@@ -81,6 +85,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
       }
       const data = await api.authWebapp(storedRef);
       setUser(data);
+      setAuthError(null);
       setPremiumUntil(data.premium_until);
       if (data.premium_until) {
         setPremiumActive(new Date(data.premium_until) > new Date());
@@ -92,6 +97,25 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
       }
       markAuthReady();
     } catch (error) {
+      setAuthToken(null);
+      if (error instanceof ApiError) {
+        const detail = error.data?.detail as string | undefined;
+        const message =
+          detail === "init_data_required"
+            ? "Не удалось получить initData. Откройте WebApp из Telegram."
+            : detail === "init_data_invalid"
+              ? "initData не прошёл проверку. Попробуйте открыть WebApp заново."
+              : detail === "init_data_expired"
+                ? "initData устарел. Перезапустите WebApp."
+                : detail === "clock_skew"
+                  ? "Ошибка времени устройства. Проверьте часы и перезапустите WebApp."
+                  : detail === "bad_hash_format"
+                    ? "initData повреждён. Откройте WebApp заново."
+                    : "Не удалось авторизоваться. Попробуйте позже.";
+        setAuthError(message);
+      } else {
+        setAuthError("Не удалось авторизоваться. Попробуйте позже.");
+      }
       markAuthFailed();
       throw error;
     }
@@ -105,6 +129,9 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
   useEffect(() => {
     if (initDataLen > 0) {
       refreshAuth().catch(() => null);
+    } else if (getAuthToken()) {
+      markAuthReady();
+      setAuthError(null);
     } else {
       markAuthMissing();
     }
@@ -121,6 +148,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
       favoriteIds,
       subscriptions,
       user,
+      authError,
       premiumUntil,
       premiumActive,
       referral,
@@ -136,6 +164,7 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
       favoriteIds,
       subscriptions,
       user,
+      authError,
       premiumUntil,
       premiumActive,
       referral,

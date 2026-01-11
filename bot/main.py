@@ -13,6 +13,15 @@ from app.workers.queue_worker import run_queue_worker
 logger = logging.getLogger("kina.bot.main")
 
 
+async def _set_menu_button(bot: Bot, webapp_url: str) -> None:
+    try:
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Каталог", web_app=WebAppInfo(url=webapp_url)),
+        )
+    except Exception:
+        logger.warning("Failed to set chat menu button", exc_info=True)
+
+
 async def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
@@ -23,10 +32,7 @@ async def main() -> None:
     redis = get_redis(settings.redis_url)
 
     dispatcher.include_router(build_router(settings, session_maker, redis))
-    try:
-        await _set_menu_button(bot, settings.webapp_url)
-    except NameError:
-        logger.warning("Menu button helper is not defined; skipping", exc_info=True)
+    await _set_menu_button(bot, settings.webapp_url)
     worker_task = asyncio.create_task(
         run_queue_worker(bot, settings, session_maker, redis),
         name="queue-worker",
@@ -41,12 +47,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-async def _set_menu_button(bot: Bot, webapp_url: str) -> None:
-    try:
-        await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="Каталог", web_app=WebAppInfo(url=webapp_url)),
-        )
-    except Exception:
-        logger.warning("Failed to set chat menu button", exc_info=True)

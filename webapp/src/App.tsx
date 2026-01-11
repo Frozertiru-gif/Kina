@@ -34,7 +34,7 @@ const TopBar = () => {
 };
 
 const AppLayout = () => {
-  const { refreshFavorites, refreshSubscriptions } = useUserData();
+  const { refreshFavorites, refreshSubscriptions, authError } = useUserData();
   const { initDataLen, refreshInitData, isChecking } = useTelegramInitData();
 
   useEffect(() => {
@@ -49,6 +49,21 @@ const AppLayout = () => {
     >
       <TelegramDiagnosticsBanner />
       <TopBar />
+      {authError && initDataLen > 0 && (
+        <div className="main-content" style={{ paddingBottom: 0 }}>
+          <div className="card">
+            <p className="meta">{authError}</p>
+            <button
+              type="button"
+              className="button"
+              onClick={() => refreshInitData().catch(() => null)}
+              disabled={isChecking}
+            >
+              {isChecking ? "Проверяем..." : "Повторить проверку"}
+            </button>
+          </div>
+        </div>
+      )}
       {initDataLen === 0 && (
         <div className="main-content" style={{ paddingBottom: 0 }}>
           <div className="card">

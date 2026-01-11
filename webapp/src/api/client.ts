@@ -14,6 +14,8 @@ import { getCurrentInitData, telegramEnv } from "../state/telegramInitData";
 import { waitForAuthReady } from "./authGate";
 
 const API_BASE = "/api";
+const AUTH_TOKEN_KEY = "kina_auth_token";
+let authToken: string | null = null;
 
 const getDevUserId = (): string | null => {
   if (typeof window === "undefined") {
@@ -22,10 +24,34 @@ const getDevUserId = (): string | null => {
   return localStorage.getItem("devUserId");
 };
 
+export const getAuthToken = (): string | null => {
+  if (authToken) {
+    return authToken;
+  }
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const stored = localStorage.getItem(AUTH_TOKEN_KEY);
+  authToken = stored;
+  return stored;
+};
+
+export const setAuthToken = (token: string | null) => {
+  authToken = token;
+  if (typeof window === "undefined") {
+    return;
+  }
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  }
+};
+
 const getAuthHeaders = (): Record<string, string> => {
-  const initData = getCurrentInitData();
-  if (initData.length > 0) {
-    return { "X-Init-Data": initData };
+  const token = getAuthToken();
+  if (token) {
+    return { Authorization: `Bearer ${token}` };
   }
   const devUserId = getDevUserId();
   if (devUserId) {
@@ -50,7 +76,8 @@ const apiFetch = async <T>(
   config: { requiresAuth?: boolean; onResponse?: (response: Response) => void } = {},
 ): Promise<T> => {
   const devUserId = getDevUserId();
-  if (config.requiresAuth && !devUserId) {
+  const token = getAuthToken();
+  if (config.requiresAuth && !token && !devUserId) {
     const initData = getCurrentInitData();
     if (!initData) {
       throw new Error("auth_missing");
@@ -71,7 +98,14 @@ const apiFetch = async <T>(
   config.onResponse?.(response);
 
   if (response.status === 401 || response.status === 403) {
-    throw new Error("auth_error");
+    const errorPayload = (await response.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const detail = errorPayload?.detail as string | undefined;
+    if (detail && ["token_expired", "token_invalid", "token_missing"].includes(detail)) {
+      setAuthToken(null);
+    }
+    throw new ApiError("auth_error", errorPayload);
   }
 
   if (!response.ok) {
@@ -103,6 +137,9 @@ export const api = {
           console.info("[tg-auth] /api/auth/webapp", response.status);
         }
       },
+    }).then((data) => {
+      setAuthToken(data.access_token);
+      return data;
     }),
   getReferralMe: () => apiFetch<ReferralInfo>("/referral/me"),
   getTop: (type?: TitleType) =>
@@ -168,5 +205,8 @@ export const authInfo = {
   },
   get devUserId(): string | null {
     return getDevUserId();
+  },
+  get token(): string | null {
+    return getAuthToken();
   },
 };

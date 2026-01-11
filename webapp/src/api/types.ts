@@ -65,6 +65,9 @@ export interface AuthResponse {
   username: string | null;
   first_name: string | null;
   premium_until: string | null;
+  access_token: string;
+  token_type: string;
+  expires_in: number;
 }
 
 export interface ReferralInfo {
