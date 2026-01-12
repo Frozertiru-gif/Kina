@@ -1,4 +1,5 @@
 import logging
+import re
 
 import httpx
 from aiogram import Bot, Router
@@ -32,6 +33,64 @@ def build_router(
     redis: Redis,
 ) -> Router:
     router = Router()
+
+    @router.message()
+    async def on_ingest_message(message: Message) -> None:
+        # Keep this handler first; it must short-circuit for non-ingest messages.
+        if settings.ingest_chat_id is None or message.chat.id != settings.ingest_chat_id:
+            return
+        has_video = message.video is not None
+        has_document = message.document is not None
+        if not has_video and not has_document:
+            return
+        logger.info(
+            "ingest chat received",
+            extra={
+                "action": "ingest_chat_received",
+                "chat_id": message.chat.id,
+                "message_id": message.message_id,
+                "has_video": has_video,
+                "has_document": has_document,
+            },
+        )
+        caption = (message.caption or "").strip()
+        parsed = _parse_ingest_caption(caption)
+        if not parsed:
+            await message.answer("ERROR bad_caption. Example: kina:title=6;a=1;q=2")
+            return
+        file_id = message.video.file_id if has_video else message.document.file_id
+        payload = {
+            "title_id": parsed["title"],
+            "episode_id": parsed.get("ep"),
+            "audio_id": parsed["a"],
+            "quality_id": parsed["q"],
+            "telegram_file_id": file_id,
+            "storage_message_id": message.message_id,
+            "storage_chat_id": message.chat.id,
+        }
+        result = await _post_admin_json(settings, "/api/admin/media/attach_file", payload)
+        if result["ok"]:
+            variant_id = result["data"].get("variant_id")
+            if variant_id:
+                logger.info(
+                    "ingest chat attach ok",
+                    extra={
+                        "action": "ingest_chat_attach_ok",
+                        "variant_id": variant_id,
+                    },
+                )
+                await message.answer(f"OK variant_id={variant_id} ready")
+                return
+        status = result.get("status") or result.get("error") or "unknown"
+        logger.warning(
+            "ingest chat attach failed",
+            extra={
+                "action": "ingest_chat_attach_fail",
+                "status": status,
+                "body_snippet": result.get("body_snippet"),
+            },
+        )
+        await message.answer(f"ERROR attach_failed {status}")
 
     @router.callback_query()
     async def on_callback(query: CallbackQuery) -> None:
@@ -163,6 +222,37 @@ def build_router(
 
 def _callback_prefix(data: str) -> str:
     return data.split(":", 1)[0]
+
+
+def _parse_ingest_caption(caption: str) -> dict | None:
+    if not caption:
+        return None
+    match = re.match(r"^kina\s*:\s*(.+)$", caption)
+    if not match:
+        return None
+    body = match.group(1)
+    parts = re.split(r"\s*;\s*", body)
+    data: dict[str, int] = {}
+    for part in parts:
+        if not part:
+            continue
+        key_value = re.split(r"\s*=\s*", part, maxsplit=1)
+        if len(key_value) != 2:
+            return None
+        key = key_value[0].strip().lower()
+        value_raw = key_value[1].strip()
+        if key not in {"title", "ep", "a", "q"}:
+            return None
+        if not value_raw:
+            return None
+        try:
+            value = int(value_raw)
+        except ValueError:
+            return None
+        data[key] = value
+    if "title" not in data or "a" not in data or "q" not in data:
+        return None
+    return data
 
 
 async def _debounce_callback(redis: Redis, tg_user_id: int, prefix: str) -> bool:
@@ -523,3 +613,38 @@ async def _post_service_json(
         except httpx.HTTPError:
             logger.exception("Failed to call %s", url)
             return None
+
+
+async def _post_admin_json(
+    settings: Settings,
+    path: str,
+    payload: dict,
+) -> dict:
+    if not settings.api_base_url or not settings.admin_token:
+        logger.warning("API_BASE_URL or ADMIN_TOKEN not configured.")
+        return {"ok": False, "error": "missing_config"}
+    url = f"{settings.api_base_url}{path}"
+    headers = {"X-Admin-Token": settings.admin_token}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.post(url, json=payload, headers=headers)
+        except httpx.HTTPError:
+            logger.exception("Failed to call %s", url)
+            return {"ok": False, "error": "exception"}
+    body_snippet = (response.text or "")[:200]
+    if not response.is_success:
+        return {
+            "ok": False,
+            "status": response.status_code,
+            "body_snippet": body_snippet,
+        }
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+    return {
+        "ok": True,
+        "status": response.status_code,
+        "data": data,
+        "body_snippet": body_snippet,
+    }
