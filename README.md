@@ -89,7 +89,10 @@ curl -X GET http://localhost/api/admin/upload_jobs?status=failed \
 - `REDIS_URL`
 - `DATABASE_URL`
 - `SERVICE_TOKEN`
-- `API_BASE_URL`
+- `API_BASE_URL` (рекомендуемое значение для docker-compose: `http://api:8000`)
+
+### QA
+- Для админских запросов используйте заголовок `X-Admin-Token`.
 
 ### Запуск бота (Docker)
 ```bash
