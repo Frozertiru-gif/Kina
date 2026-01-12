@@ -181,6 +181,8 @@ export default function App() {
           adminToken,
           adminUserId,
         ),
+      delete: <T,>(path: string) =>
+        apiFetch<T>(path, { method: "DELETE" }, adminToken, adminUserId),
     }),
     [adminToken, adminUserId],
   );
@@ -396,6 +398,20 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
     }
   };
 
+  const handleDelete = async (titleId: number) => {
+    const confirmed = window.confirm("Удалить тайтл? Все сезоны и варианты будут удалены.");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/titles/${titleId}`);
+      if (selectedId === titleId) {
+        setSelectedId(null);
+      }
+      loadTitles();
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  };
+
   return (
     <section>
       <h2>Тайтлы</h2>
@@ -471,25 +487,48 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
           </div>
           <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px" }}>
             {titles.map((title) => (
-              <button
+              <div
                 key={title.id}
-                type="button"
-                onClick={() => setSelectedId(title.id)}
                 style={{
-                  width: "100%",
-                  padding: "0.75rem 1rem",
-                  textAlign: "left",
-                  border: "none",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
                   borderBottom: "1px solid #e5e7eb",
                   background: selectedId === title.id ? "#eef2ff" : "transparent",
-                  cursor: "pointer",
                 }}
               >
-                <strong>{title.name}</strong>
-                <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                  {title.type === "movie" ? "фильм" : "сериал"} · {title.year ?? "нет"}
-                </div>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(title.id)}
+                  style={{
+                    width: "100%",
+                    padding: "0.75rem 1rem",
+                    textAlign: "left",
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                  }}
+                >
+                  <strong>{title.name}</strong>
+                  <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
+                    {title.type === "movie" ? "фильм" : "сериал"} · {title.year ?? "нет"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDelete(title.id)}
+                  style={{
+                    marginRight: "0.75rem",
+                    background: "#fee2e2",
+                    color: "#991b1b",
+                    border: "1px solid #fecaca",
+                    padding: "0.35rem 0.75rem",
+                    borderRadius: "6px",
+                  }}
+                >
+                  Удалить
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -1119,6 +1158,17 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
     load();
   }, []);
 
+  const handleDelete = async (variantId: number) => {
+    const confirmed = window.confirm("Удалить вариант?");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/variants/${variantId}`);
+      load();
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  };
+
   return (
     <section>
       <h2>Варианты</h2>
@@ -1180,6 +1230,20 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
                 Копировать
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => handleDelete(variant.id)}
+              style={{
+                width: "fit-content",
+                background: "#fee2e2",
+                color: "#991b1b",
+                border: "1px solid #fecaca",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "6px",
+              }}
+            >
+              Удалить вариант
+            </button>
           </div>
         ))}
       </div>
@@ -1323,6 +1387,27 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
     }
   };
 
+  const handleDelete = async (trackId: number) => {
+    const confirmed = window.confirm("Удалить аудиодорожку?");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/audio_tracks/${trackId}`);
+      load();
+    } catch (err) {
+      const message = (err as Error).message;
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed?.detail?.code === "in_use") {
+          window.alert(`Нельзя удалить: используется в ${parsed.detail.count} вариантах`);
+          return;
+        }
+      } catch {
+        // ignore JSON parse errors
+      }
+      onError(message);
+    }
+  };
+
   return (
     <section>
       <h2>Аудиодорожки</h2>
@@ -1402,9 +1487,24 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
                 {track.is_active ? "Активна" : "Отключена"}
               </div>
             </div>
-            <button type="button" onClick={() => setEditTrack(track)}>
-              Редактировать
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="button" onClick={() => setEditTrack(track)}>
+                Редактировать
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(track.id)}
+                style={{
+                  background: "#fee2e2",
+                  color: "#991b1b",
+                  border: "1px solid #fecaca",
+                  padding: "0.35rem 0.75rem",
+                  borderRadius: "6px",
+                }}
+              >
+                Удалить
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -1456,6 +1556,27 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
       load();
     } catch (err) {
       onError((err as Error).message);
+    }
+  };
+
+  const handleDelete = async (qualityId: number) => {
+    const confirmed = window.confirm("Удалить качество?");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/qualities/${qualityId}`);
+      load();
+    } catch (err) {
+      const message = (err as Error).message;
+      try {
+        const parsed = JSON.parse(message);
+        if (parsed?.detail?.code === "in_use") {
+          window.alert(`Нельзя удалить: используется в ${parsed.detail.count} вариантах`);
+          return;
+        }
+      } catch {
+        // ignore JSON parse errors
+      }
+      onError(message);
     }
   };
 
@@ -1544,9 +1665,24 @@ function QualityView({ api, onError }: { api: any; onError: (msg: string) => voi
                 {quality.is_active ? "Активно" : "Отключено"}
               </div>
             </div>
-            <button type="button" onClick={() => setEditQuality(quality)}>
-              Редактировать
-            </button>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="button" onClick={() => setEditQuality(quality)}>
+                Редактировать
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDelete(quality.id)}
+                style={{
+                  background: "#fee2e2",
+                  color: "#991b1b",
+                  border: "1px solid #fecaca",
+                  padding: "0.35rem 0.75rem",
+                  borderRadius: "6px",
+                }}
+              >
+                Удалить
+              </button>
+            </div>
           </div>
         ))}
       </div>
