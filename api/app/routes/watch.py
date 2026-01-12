@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
@@ -13,6 +14,7 @@ from app.services.rate_limit import check_rate_limit, rate_limit_response, regis
 from app.services.watch_resolver import ResolveVariantError, resolve_watch_variant
 
 router = APIRouter()
+logger = logging.getLogger("kina.api.watch")
 
 
 class WatchResolveRequest(BaseModel):
@@ -143,10 +145,21 @@ async def watch_resolve(
             quality_id=payload.quality_id,
         )
     except ResolveVariantError as exc:
+        logger.info(
+            "watch resolve failed",
+            extra={
+                "action": "watch_resolve_no_ready_with_file",
+                "user_id": user.id,
+                "title_id": payload.title_id,
+                "episode_id": payload.episode_id,
+                "counts": exc.payload.counts,
+            },
+        )
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={
-                "error": "variant_not_found",
+                "error": exc.payload.error,
+                "counts": exc.payload.counts,
                 "available_audio_ids": exc.payload.available_audio_ids,
                 "available_quality_ids": exc.payload.available_quality_ids,
                 "available_variants": exc.payload.available_variants,
