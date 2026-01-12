@@ -4,6 +4,7 @@ import logging
 
 from aiogram import Bot
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app import keyboards
@@ -31,6 +32,11 @@ async def run_queue_worker(
             result = await redis.brpop(queues, timeout=5)
         except asyncio.CancelledError:
             break
+        except RedisError:
+            logger.exception("Queue worker redis error")
+            redis.connection_pool.disconnect()
+            await asyncio.sleep(1)
+            continue
         except Exception:  # noqa: BLE001
             logger.exception("Queue worker error")
             await asyncio.sleep(1)
