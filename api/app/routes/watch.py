@@ -158,6 +158,7 @@ async def watch_resolve(
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={
+                "code": exc.payload.error,
                 "error": exc.payload.error,
                 "counts": exc.payload.counts,
                 "available_audio_ids": exc.payload.available_audio_ids,
