@@ -18,7 +18,7 @@ class ResolveResult:
 @dataclass(frozen=True)
 class ResolveNotFound:
     error: str
-    debug: dict
+    counts: dict
     available_variants: list[dict]
     available_audio_ids: list[int]
     available_quality_ids: list[int]
@@ -99,6 +99,7 @@ async def _find_variant_with_status(
         MediaVariant.quality_id == quality_id,
         MediaVariant.status == "ready",
         MediaVariant.telegram_file_id.is_not(None),
+        MediaVariant.telegram_file_id != "",
     )
     variant_result = await session.execute(variant_query)
     variant = variant_result.scalar_one_or_none()
@@ -143,6 +144,7 @@ async def _find_best_variant(
             ),
             MediaVariant.status == "ready",
             MediaVariant.telegram_file_id.is_not(None),
+            MediaVariant.telegram_file_id != "",
             AudioTrack.is_active.is_(True),
             Quality.is_active.is_(True),
         )
@@ -168,11 +170,11 @@ async def _build_available_payload(
         availability_query = availability_query.where(MediaVariant.episode_id == episode_id)
     availability_result = await session.execute(availability_query)
     available_variants = availability_result.scalars().all()
-    ready_variants = [
-        item for item in available_variants if item.status == "ready"
-    ]
-    variants_with_file = [
-        item for item in available_variants if item.telegram_file_id is not None
+    ready_variants = [item for item in available_variants if item.status == "ready"]
+    ready_with_file = [
+        item
+        for item in available_variants
+        if item.status == "ready" and item.telegram_file_id not in (None, "")
     ]
     audio_ids = sorted({item.audio_id for item in available_variants})
     quality_ids = sorted({item.quality_id for item in available_variants})
@@ -186,10 +188,10 @@ async def _build_available_payload(
     ]
     return ResolveNotFound(
         error="no_ready_variant_with_file",
-        debug={
-            "total_variants": len(available_variants),
-            "ready_variants": len(ready_variants),
-            "variants_with_file": len(variants_with_file),
+        counts={
+            "total": len(available_variants),
+            "ready": len(ready_variants),
+            "ready_with_file": len(ready_with_file),
         },
         available_variants=variants_payload,
         available_audio_ids=audio_ids,

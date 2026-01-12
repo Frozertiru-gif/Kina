@@ -266,7 +266,8 @@ async def watch_resolve_internal(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={
-                "error": "variant_not_found",
+                "error": exc.payload.error,
+                "counts": exc.payload.counts,
                 "available_audio_ids": exc.payload.available_audio_ids,
                 "available_quality_ids": exc.payload.available_quality_ids,
                 "available_variants": exc.payload.available_variants,

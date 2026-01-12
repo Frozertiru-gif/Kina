@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -149,6 +149,30 @@ class VariantUpdate(BaseModel):
     duration_sec: int | None = None
     size_bytes: int | None = None
     checksum_sha256: str | None = None
+
+
+class VariantAttachFile(BaseModel):
+    title_id: int
+    episode_id: int | None = None
+    audio_id: int
+    quality_id: int
+    telegram_file_id: str = Field(..., min_length=1)
+    storage_message_id: int | None = None
+    storage_chat_id: int | None = None
+
+    @validator("telegram_file_id")
+    def telegram_file_id_not_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("telegram_file_id must not be empty")
+        return value
+
+
+class VariantAttachFileResponse(BaseModel):
+    variant_id: int
+    status: str
+    telegram_file_id: str
+    storage_message_id: int | None
+    storage_chat_id: int | None
 
 
 class PremiumGrantRequest(BaseModel):
@@ -833,6 +857,89 @@ async def list_variants(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.post("/media/attach_file", response_model=VariantAttachFileResponse)
+async def attach_variant_file(
+    payload: VariantAttachFile,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> VariantAttachFileResponse:
+    title = await session.get(Title, payload.title_id)
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+    if payload.episode_id is not None:
+        episode = await session.get(Episode, payload.episode_id)
+        if not episode:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
+        if episode.title_id != payload.title_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch")
+
+    variant_query = select(MediaVariant).where(
+        MediaVariant.title_id == payload.title_id,
+        MediaVariant.audio_id == payload.audio_id,
+        MediaVariant.quality_id == payload.quality_id,
+    )
+    if payload.episode_id is None:
+        variant_query = variant_query.where(MediaVariant.episode_id.is_(None))
+    else:
+        variant_query = variant_query.where(MediaVariant.episode_id == payload.episode_id)
+    result = await session.execute(variant_query)
+    variant = result.scalar_one_or_none()
+    created = False
+    if variant is None:
+        variant = MediaVariant(
+            title_id=payload.title_id,
+            episode_id=payload.episode_id,
+            audio_id=payload.audio_id,
+            quality_id=payload.quality_id,
+            status="ready",
+            error=None,
+        )
+        session.add(variant)
+        created = True
+
+    variant.telegram_file_id = payload.telegram_file_id
+    variant.storage_message_id = payload.storage_message_id
+    variant.storage_chat_id = payload.storage_chat_id
+    variant.status = "ready"
+    variant.error = None
+
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="attach_file",
+        entity_type="media_variant",
+        entity_id=variant.id,
+        metadata={
+            "title_id": variant.title_id,
+            "episode_id": variant.episode_id,
+            "audio_id": variant.audio_id,
+            "quality_id": variant.quality_id,
+            "created": created,
+        },
+    )
+    logger.info(
+        "admin attach file",
+        extra={
+            "action": "attach_file",
+            "variant_id": variant.id,
+            "title_id": variant.title_id,
+            "episode_id": variant.episode_id,
+            "audio_id": variant.audio_id,
+            "quality_id": variant.quality_id,
+        },
+    )
+    await session.commit()
+    await session.refresh(variant)
+    return VariantAttachFileResponse(
+        variant_id=variant.id,
+        status=variant.status,
+        telegram_file_id=variant.telegram_file_id or "",
+        storage_message_id=variant.storage_message_id,
+        storage_chat_id=variant.storage_chat_id,
+    )
 
 
 @router.get("/upload_jobs")
