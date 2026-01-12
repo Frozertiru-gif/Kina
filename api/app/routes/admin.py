@@ -3,6 +3,7 @@ import logging
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,16 +12,19 @@ from app.dependencies import get_admin_token, get_db_session
 from app.models import (
     AudioTrack,
     Episode,
+    Favorite,
     MediaVariant,
     Quality,
     Referral,
     ReferralReward,
     Season,
+    Subscription,
     Title,
     TitleType,
     UploadJob,
     User,
     UserPremium,
+    ViewEvent,
 )
 from app.redis import get_redis
 from app.services.audit import log_audit_event
@@ -352,6 +356,9 @@ async def delete_title(
     title = await session.get(Title, title_id)
     if not title:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+    await session.execute(delete(ViewEvent).where(ViewEvent.title_id == title_id))
+    await session.execute(delete(Favorite).where(Favorite.title_id == title_id))
+    await session.execute(delete(Subscription).where(Subscription.title_id == title_id))
     variant_ids = select(MediaVariant.id).where(MediaVariant.title_id == title_id)
     await session.execute(delete(UploadJob).where(UploadJob.variant_id.in_(variant_ids)))
     await session.execute(delete(MediaVariant).where(MediaVariant.title_id == title_id))
@@ -361,7 +368,7 @@ async def delete_title(
     await _log_admin_event(
         session,
         admin_info,
-        action="title_deleted",
+        action="admin_delete_title",
         entity_type="title",
         entity_id=title_id,
         metadata={"name": title.name},
@@ -568,15 +575,15 @@ async def delete_audio_track(
     )
     usage_count = usage_result.scalar_one()
     if usage_count:
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "in_use", "count": usage_count},
+            content={"detail": "in_use", "count": usage_count},
         )
     await session.delete(track)
     await _log_admin_event(
         session,
         admin_info,
-        action="audio_track_deleted",
+        action="admin_delete_audio",
         entity_type="audio_track",
         entity_id=track_id,
         metadata={"code": track.code},
@@ -789,7 +796,7 @@ async def delete_variant(
     await _log_admin_event(
         session,
         admin_info,
-        action="variant_deleted",
+        action="admin_delete_variant",
         entity_type="media_variant",
         entity_id=variant_id,
         metadata={"title_id": variant.title_id, "episode_id": variant.episode_id},
