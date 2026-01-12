@@ -17,8 +17,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(sa.text("ALTER TABLE upload_jobs DROP CONSTRAINT IF EXISTS upload_jobs_variant_id_fkey"))
-    op.execute(sa.text("DROP TABLE IF EXISTS upload_jobs CASCADE"))
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if inspector.has_table("upload_jobs", schema="public"):
+        op.execute(sa.text("ALTER TABLE public.upload_jobs DROP CONSTRAINT IF EXISTS upload_jobs_variant_id_fkey"))
+        op.drop_table("upload_jobs", schema="public")
 
 
 def downgrade() -> None:
