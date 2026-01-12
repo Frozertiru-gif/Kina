@@ -76,9 +76,6 @@ curl -X POST http://localhost/api/admin/variants \
   -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title_id":1,"audio_id":1,"quality_id":1,"status":"pending"}'
-
-curl -X GET http://localhost/api/admin/upload_jobs?status=failed \
-  -H "X-Admin-Token: $ADMIN_SERVICE_TOKEN"
 ```
 
 ## Telegram Bot
@@ -89,7 +86,10 @@ curl -X GET http://localhost/api/admin/upload_jobs?status=failed \
 - `REDIS_URL`
 - `DATABASE_URL`
 - `SERVICE_TOKEN`
+- `ADMIN_TOKEN` (если нужны админские команды бота)
 - `API_BASE_URL` (рекомендуемое значение для docker-compose: `http://api:8000`)
+- `INGEST_CHAT_ID` (чат для приема ingest-сообщений)
+- `STORAGE_CHAT_ID` (ID чата хранилища в Telegram, если используется)
 
 ### QA
 - Для админских запросов используйте заголовок `X-Admin-Token`.
@@ -138,9 +138,6 @@ docker compose up --build bot
 - POST /api/internal/bot/send_video
 - POST /api/internal/bot/send_notification
 - POST /api/internal/user/subscription_toggle
-- POST /api/internal/uploader/retry_job
-- GET  /api/internal/uploader/jobs
-- POST /api/internal/uploader/rescan
 - GET  /api/internal/metrics
 
 ### Авторизация (DEV bypass)
@@ -267,55 +264,6 @@ docker compose up --build
 ## Примечания
 - Контейнер Nginx отдает заглушки HTML для `/` и `/admin/`.
 - Бот при старте падает, если `BOT_TOKEN` не задан.
-
-## Uploader Service
-Uploader следит за ingest папкой, сопоставляет файлы с вариантами, загружает их в чат
-хранилища Telegram и сохраняет `file_id` + детали сообщения в БД.
-
-### Обязательные переменные окружения
-- `STORAGE_CHAT_ID` (ID чата хранилища в Telegram)
-- `BOT_TOKEN`
-- `DATABASE_URL`
-- `REDIS_URL`
-- `UPLOAD_INGEST_DIR`
-
-### Опциональные переменные окружения
-- `UPLOAD_ARCHIVE_DIR` (архивировать загруженные файлы)
-- `UPLOAD_FAILED_DIR` (перемещать некорректные/ошибочные файлы)
-- `UPLOAD_POLL_SECONDS`
-- `UPLOAD_MAX_RETRIES`
-- `UPLOAD_BACKOFF_SECONDS`
-- `UPLOAD_MAX_CONCURRENT`
-- `UPLOAD_MAX_FILE_MB`
-- `USE_LOCAL_BOT_API` (по умолчанию `true`)
-- `LOCAL_BOT_API_BASE_URL`
-- `TELEGRAM_API_BASE_URL`
-
-### Процесс загрузки
-1. Поместите файл в ingest директорию (по умолчанию `./data/ingest`).
-2. Uploader парсит имя файла и сопоставляет `media_variants`.
-3. Uploader отправляет видео в чат хранилища через `sendVideo`.
-4. БД обновляется `telegram_file_id`, `storage_message_id`, `storage_chat_id` и статусом.
-
-### Схема именования
-- Фильм: `title_<title_id>__a_<audio_id>__q_<quality_id>.mp4`
-- Эпизод: `ep_<episode_id>__a_<audio_id>__q_<quality_id>.mp4`
-
-Примеры:
-- `title_12__a_1__q_2.mp4`
-- `ep_345__a_1__q_2.mkv`
-
-### Проверка заданий загрузчика
-```bash
-curl -H "Authorization: Bearer $SERVICE_TOKEN" \
-  "http://localhost/api/internal/uploader/jobs?status=failed&limit=50"
-```
-
-### Запуск пересканирования
-```bash
-curl -X POST -H "Authorization: Bearer $SERVICE_TOKEN" \
-  http://localhost/api/internal/uploader/rescan
-```
 
 ### Local Bot API
 Задайте `USE_LOCAL_BOT_API=true` и `LOCAL_BOT_API_BASE_URL=http://local-bot-api:8081`, чтобы

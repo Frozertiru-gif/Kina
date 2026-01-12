@@ -1,7 +1,7 @@
 import json
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,6 @@ from app.models import (
     Subscription,
     Title,
     TitleType,
-    UploadJob,
     User,
     UserPremium,
 )
@@ -75,10 +74,6 @@ class WatchResolveRequest(BaseModel):
     episode_id: int | None = None
     audio_id: int | None = None
     quality_id: int | None = None
-
-
-class RetryUploadJobRequest(BaseModel):
-    job_id: int
 
 
 class ReferralApplyRequest(BaseModel):
@@ -281,61 +276,6 @@ async def watch_resolve_internal(
     }
 
 
-@router.post("/internal/uploader/retry_job")
-async def retry_upload_job(
-    payload: RetryUploadJobRequest,
-    _: None = Depends(get_service_token),
-    session: AsyncSession = Depends(get_db_session),
-) -> dict:
-    result = await session.execute(select(UploadJob).where(UploadJob.id == payload.job_id))
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
-    job.status = "queued"
-    job.last_error = None
-    job.attempts = 0
-    variant = await session.get(MediaVariant, job.variant_id)
-    if variant:
-        variant.status = "uploading"
-        variant.error = None
-    await session.commit()
-    return {"job_id": job.id, "status": job.status}
-
-
-@router.get("/internal/uploader/jobs")
-async def list_upload_jobs(
-    status: str | None = Query(default=None, max_length=50),
-    limit: int = Query(default=50, ge=1, le=200),
-    _: None = Depends(get_service_token),
-    session: AsyncSession = Depends(get_db_session),
-) -> dict:
-    query = select(UploadJob).order_by(UploadJob.id.desc()).limit(limit)
-    if status:
-        query = query.where(UploadJob.status == status)
-    result = await session.execute(query)
-    jobs = result.scalars().all()
-    return {
-        "items": [
-            {
-                "id": job.id,
-                "variant_id": job.variant_id,
-                "status": job.status,
-                "attempts": job.attempts,
-                "local_path": job.local_path,
-                "last_error": job.last_error,
-            }
-            for job in jobs
-        ]
-    }
-
-
-@router.post("/internal/uploader/rescan")
-async def uploader_rescan(_: None = Depends(get_service_token)) -> dict:
-    redis = get_redis()
-    await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
-    return {"queued": True}
-
-
 @router.post("/internal/referral/apply")
 async def apply_referral_internal(
     payload: ReferralApplyRequest,
@@ -393,17 +333,8 @@ async def get_metrics(
         "send_video_queue",
         "send_video_vip_queue",
         "notify_queue",
-        "uploader_control_queue",
     ]
     queue_lengths = {queue: await redis.llen(queue) for queue in queues}
-
-    upload_statuses = ["queued", "uploading", "failed", "done"]
-    upload_counts = {}
-    for status_name in upload_statuses:
-        result = await session.execute(
-            select(func.count()).select_from(UploadJob).where(UploadJob.status == status_name)
-        )
-        upload_counts[status_name] = result.scalar_one()
 
     variant_statuses = ["pending", "ready", "failed"]
     variant_counts = {}
@@ -422,7 +353,6 @@ async def get_metrics(
 
     return {
         "queue_lengths": queue_lengths,
-        "upload_jobs": upload_counts,
         "variants": variant_counts,
         "users": {"total": users_total.scalar_one(), "banned": users_banned.scalar_one()},
         "ads": {"passes_active_estimate": ads_passes},

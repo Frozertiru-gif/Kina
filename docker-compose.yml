@@ -54,19 +54,6 @@ services:
       api:
         condition: service_healthy
 
-  uploader:
-    build: ./uploader
-    env_file: .env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./data/ingest:/data/ingest
-      - ./data/archive:/data/archive
-      - ./data/failed:/data/failed
-
   nginx:
     build:
       context: .

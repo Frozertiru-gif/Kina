@@ -55,15 +55,6 @@ type Quality = {
   is_active: boolean;
 };
 
-type UploadJob = {
-  id: number;
-  variant_id: number;
-  status: string;
-  attempts: number;
-  local_path: string;
-  last_error?: string | null;
-};
-
 type AdminUser = {
   id: number;
   tg_user_id: number;
@@ -103,7 +94,6 @@ const tabs = [
   { id: "dashboard", label: "Панель" },
   { id: "titles", label: "Тайтлы" },
   { id: "variants", label: "Варианты" },
-  { id: "jobs", label: "Задания загрузки" },
   { id: "audio", label: "Аудиодорожки" },
   { id: "qualities", label: "Качества" },
   { id: "users", label: "Пользователи" },
@@ -273,7 +263,6 @@ export default function App() {
           {activeTab === "variants" && (
             <VariantsView api={api} onError={setError} />
           )}
-          {activeTab === "jobs" && <JobsView api={api} onError={setError} />}
           {activeTab === "audio" && <AudioView api={api} onError={setError} />}
           {activeTab === "qualities" && (
             <QualityView api={api} onError={setError} />
@@ -293,26 +282,20 @@ function Dashboard({ api, onError }: { api: any; onError: (msg: string) => void 
     titles: 0,
     pendingVariants: 0,
     readyVariants: 0,
-    queuedJobs: 0,
-    failedJobs: 0,
   });
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [titles, pending, ready, queued, failed] = await Promise.all([
+        const [titles, pending, ready] = await Promise.all([
           api.get<{ total: number }>("/admin/titles?limit=1"),
           api.get<{ total: number }>("/admin/variants?status=pending&limit=1"),
           api.get<{ total: number }>("/admin/variants?status=ready&limit=1"),
-          api.get<{ total: number }>("/admin/upload_jobs?status=queued&limit=1"),
-          api.get<{ total: number }>("/admin/upload_jobs?status=failed&limit=1"),
         ]);
         setStats({
           titles: titles.total,
           pendingVariants: pending.total,
           readyVariants: ready.total,
-          queuedJobs: queued.total,
-          failedJobs: failed.total,
         });
       } catch (err) {
         onError((err as Error).message);
@@ -328,8 +311,6 @@ function Dashboard({ api, onError }: { api: any; onError: (msg: string) => void 
         <StatCard label="Тайтлы" value={stats.titles} />
         <StatCard label="Варианты в ожидании" value={stats.pendingVariants} />
         <StatCard label="Варианты готовы" value={stats.readyVariants} />
-        <StatCard label="Задания в очереди" value={stats.queuedJobs} />
-        <StatCard label="Задания с ошибкой" value={stats.failedJobs} />
       </div>
     </section>
   );
@@ -1186,10 +1167,6 @@ function TitleVariants({
                   Копировать
                 </button>
               </div>
-              <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-                Загрузите файл на сервер в ingest с именем:{" "}
-                <strong>{variant.expected_filename}</strong>
-              </div>
             </div>
           );
         })}
@@ -1306,95 +1283,6 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
               }}
             >
               Удалить вариант
-            </button>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function JobsView({ api, onError }: { api: any; onError: (msg: string) => void }) {
-  const [jobs, setJobs] = useState<UploadJob[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
-
-  const load = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (statusFilter) params.set("status", statusFilter);
-      const data = await api.get<{ items: UploadJob[] }>(
-        `/admin/upload_jobs?${params.toString()}`,
-      );
-      setJobs(data.items);
-    } catch (err) {
-      onError((err as Error).message);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const handleRetry = async (jobId: number) => {
-    try {
-      await api.post(`/admin/upload_jobs/${jobId}/retry`);
-      load();
-    } catch (err) {
-      onError((err as Error).message);
-    }
-  };
-
-  const handleRescan = async () => {
-    try {
-      await api.post("/admin/upload_jobs/rescan");
-    } catch (err) {
-      onError((err as Error).message);
-    }
-  };
-
-  return (
-    <section>
-      <h2>Задания загрузки</h2>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-        <input
-          placeholder="Статус"
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
-        />
-        <button type="button" onClick={load}>
-          Фильтр
-        </button>
-        <button type="button" onClick={handleRescan}>
-          Пересканировать ingest
-        </button>
-      </div>
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
-        {jobs.map((job) => (
-          <div
-            key={job.id}
-            style={{
-              padding: "0.75rem 0",
-              borderBottom: "1px solid #f3f4f6",
-              display: "grid",
-              gap: "0.35rem",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <strong>
-                Задание #{job.id} · Вариант {job.variant_id}
-              </strong>
-              <span>{job.status}</span>
-            </div>
-            <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
-              Попыток: {job.attempts} · Путь: {job.local_path}
-            </div>
-            {job.last_error && (
-              <div style={{ color: "#b91c1c", fontSize: "0.85rem" }}>
-                Последняя ошибка: {job.last_error}
-              </div>
-            )}
-            <button type="button" onClick={() => handleRetry(job.id)}>
-              Повторить
             </button>
           </div>
         ))}
