@@ -76,8 +76,8 @@ async def auth_webapp(
         init_data_preview = init_data or ""
         masked_preview = re.sub(r"(user=)[^&]*", r"\1<redacted>", init_data_preview)
         masked_preview = re.sub(r"(hash=)[^&]*", r"\1<redacted>", masked_preview)
-        preview_start = masked_preview[:20]
-        preview_end = masked_preview[-20:] if len(masked_preview) > 20 else masked_preview
+        preview_start = masked_preview[:80]
+        preview_end = masked_preview[-80:] if len(masked_preview) > 80 else masked_preview
         logger.info(
             "auth webapp debug",
             extra={
@@ -86,6 +86,9 @@ async def auth_webapp(
                 "init_data_len": len(init_data or ""),
                 "init_data_preview_start": preview_start,
                 "init_data_preview_end": preview_end,
+                "user_agent": request.headers.get("user-agent") if request else None,
+                "x_forwarded_for": request.headers.get("x-forwarded-for") if request else None,
+                "x_request_id": request.headers.get("x-request-id") if request else None,
                 "content_type": request.headers.get("content-type") if request else None,
                 "body_len": len(body_bytes),
                 "header_init_data_len": len(x_init_data or ""),
@@ -127,6 +130,7 @@ async def auth_webapp(
                 extra={
                     "action": "auth_webapp_rejected",
                     "detail": detail,
+                    "rejection_reason": "parse error",
                     "status_code": status.HTTP_401_UNAUTHORIZED,
                 },
             )
@@ -142,11 +146,18 @@ async def auth_webapp(
         )
     except HTTPException as exc:
         if _is_webapp_debug_enabled():
+            if exc.detail == "init_data_expired":
+                rejection_reason = "expired"
+            elif exc.detail in {"bad_hash_format", "clock_skew", "init_data_invalid"}:
+                rejection_reason = "invalid hash"
+            else:
+                rejection_reason = "parse error"
             logger.info(
                 "auth webapp rejected",
                 extra={
                     "action": "auth_webapp_rejected",
                     "detail": exc.detail,
+                    "rejection_reason": rejection_reason,
                     "status_code": exc.status_code,
                 },
             )
@@ -164,6 +175,7 @@ async def auth_webapp(
                 extra={
                     "action": "auth_webapp_rejected",
                     "detail": detail,
+                    "rejection_reason": "parse error",
                     "status_code": status.HTTP_401_UNAUTHORIZED,
                 },
             )
