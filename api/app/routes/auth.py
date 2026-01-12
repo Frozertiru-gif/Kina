@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,6 +65,7 @@ async def auth_webapp(
     request: Request,
     payload: WebAppAuthRequest = Body(...),
     x_dev_user_id: str | None = Header(default=None, alias="X-Dev-User-Id"),
+    dev_user_id: str | None = Query(default=None),
     x_init_data: str | None = Header(default=None, alias="X-Init-Data"),
     session: AsyncSession = Depends(get_db_session),
 ) -> WebAppAuthResponse:
@@ -95,7 +96,7 @@ async def auth_webapp(
             },
         )
     if _is_dev_bypass_allowed() and not init_data:
-        tg_user_id = _get_dev_user_id(x_dev_user_id)
+        tg_user_id = _get_dev_user_id(dev_user_id or x_dev_user_id)
         user = await _upsert_user(session, tg_user_id, None, None, None)
         _ensure_not_banned(user)
         if referral_code:
