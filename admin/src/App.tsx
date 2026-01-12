@@ -535,7 +535,16 @@ function TitlesView({ api, onError }: { api: any; onError: (msg: string) => void
       </div>
 
       {selectedId && (
-        <TitleEditor key={selectedId} titleId={selectedId} api={api} onError={onError} />
+        <TitleEditor
+          key={selectedId}
+          titleId={selectedId}
+          api={api}
+          onError={onError}
+          onDeleted={() => {
+            setSelectedId(null);
+            loadTitles();
+          }}
+        />
       )}
     </section>
   );
@@ -545,10 +554,12 @@ function TitleEditor({
   titleId,
   api,
   onError,
+  onDeleted,
 }: {
   titleId: number;
   api: any;
   onError: (msg: string) => void;
+  onDeleted: () => void;
 }) {
   const [title, setTitle] = useState<Title | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -604,6 +615,17 @@ function TitleEditor({
         is_published: title.is_published,
       });
       loadTitle();
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  };
+
+  const handleTitleDelete = async () => {
+    const confirmed = window.confirm("Удалить тайтл? Все сезоны и варианты будут удалены.");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/titles/${titleId}`);
+      onDeleted();
     } catch (err) {
       onError((err as Error).message);
     }
@@ -773,6 +795,21 @@ function TitleEditor({
             </div>
             <button type="button" onClick={handleTitleSave} style={{ marginTop: "0.75rem" }}>
               Сохранить
+            </button>
+            <button
+              type="button"
+              onClick={handleTitleDelete}
+              style={{
+                marginTop: "0.75rem",
+                marginLeft: "0.5rem",
+                background: "#fee2e2",
+                color: "#991b1b",
+                border: "1px solid #fecaca",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "6px",
+              }}
+            >
+              Удалить тайтл
             </button>
           </div>
 
@@ -1019,6 +1056,17 @@ function TitleVariants({
     }
   };
 
+  const handleDelete = async (variantId: number) => {
+    const confirmed = window.confirm("Удалить вариант?");
+    if (!confirmed) return;
+    try {
+      await api.delete(`/admin/variants/${variantId}`);
+      loadVariants();
+    } catch (err) {
+      onError((err as Error).message);
+    }
+  };
+
   const audioMap = new Map(audioTracks.map((track) => [track.id, track]));
   const qualityMap = new Map(qualities.map((quality) => [quality.id, quality]));
 
@@ -1107,7 +1155,22 @@ function TitleVariants({
                   {audio ? `${audio.name} (${audio.code})` : `Аудио ${variant.audio_id}`} ·{" "}
                   {quality ? `${quality.name} (${quality.height}p)` : `Q ${variant.quality_id}`}
                 </strong>
-                <span>{variant.status}</span>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                  <span>{variant.status}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(variant.id)}
+                    style={{
+                      background: "#fee2e2",
+                      color: "#991b1b",
+                      border: "1px solid #fecaca",
+                      padding: "0.25rem 0.6rem",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    Удалить
+                  </button>
+                </div>
               </div>
               <div style={{ color: "#6b7280", fontSize: "0.85rem" }}>
                 Файл Telegram: {variant.telegram_file_id ?? "не загружен"}
@@ -1397,8 +1460,8 @@ function AudioView({ api, onError }: { api: any; onError: (msg: string) => void 
       const message = (err as Error).message;
       try {
         const parsed = JSON.parse(message);
-        if (parsed?.detail?.code === "in_use") {
-          window.alert(`Нельзя удалить: используется в ${parsed.detail.count} вариантах`);
+        if (parsed?.detail === "in_use") {
+          window.alert(`Нельзя удалить: используется в ${parsed.count} вариантах`);
           return;
         }
       } catch {
