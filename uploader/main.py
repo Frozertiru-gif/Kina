@@ -18,7 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from logging_utils import configure_logging
 
 from models import (
+    Admin,
     AuditEvent,
+    Episode,
     MediaVariant,
     Season,
     Subscription,
@@ -60,8 +62,8 @@ class ParsedVariant:
     quality_id: int
 
 
-MOVIE_PATTERN = re.compile(r"^title_(\d+)__a_(\d+)__q_(\d+)\.[^.]+$")
-EPISODE_PATTERN = re.compile(r"^ep_(\d+)__a_(\d+)__q_(\d+)\.[^.]+$")
+MOVIE_PATTERN = re.compile(r"^title_(\d+)__a_(\d+)__q_(\d+)\.mp4$")
+EPISODE_PATTERN = re.compile(r"^title_(\d+)__e_(\d+)__a_(\d+)__q_(\d+)\.mp4$")
 
 
 logger = logging.getLogger("kina.uploader")
@@ -231,7 +233,7 @@ async def scan_ingest(
             existing = await session.execute(
                 select(UploadJob).where(
                     UploadJob.local_path == resolved,
-                    UploadJob.status != "done",
+                    UploadJob.status != "ready",
                 )
             )
             if existing.scalar_one_or_none():
@@ -254,6 +256,18 @@ async def scan_ingest(
         async with session_factory() as session:
             variant = await find_variant(session, parsed)
             if variant is None:
+                logger.warning(
+                    "variant not found",
+                    extra={
+                        "action": "variant_not_found",
+                        "request_id": "scan_ingest",
+                        "title_id": parsed.title_id,
+                        "episode_id": parsed.episode_id,
+                        "audio_id": parsed.audio_id,
+                        "quality_id": parsed.quality_id,
+                        "ingest_filename": file_path.name,
+                    },
+                )
                 await move_to_failed(file_path, failed_dir, reason="variant_not_found")
                 continue
 
@@ -440,7 +454,7 @@ async def handle_job(
         variant.size_bytes = size_bytes
         variant.error = None
 
-        job.status = "done"
+        job.status = "ready"
         job.last_error = None
         await _log_audit_event(
             session,
@@ -449,7 +463,7 @@ async def handle_job(
             entity_id=job.id,
             metadata={
                 "from": "uploading",
-                "to": "done",
+                "to": "ready",
                 "variant_id": job.variant_id,
             },
         )
@@ -709,10 +723,10 @@ def parse_variant_filename(filename: str) -> ParsedVariant | None:
 
     episode_match = EPISODE_PATTERN.match(filename)
     if episode_match:
-        episode_id, audio_id, quality_id = map(int, episode_match.groups())
+        title_id, episode_id, audio_id, quality_id = map(int, episode_match.groups())
         return ParsedVariant(
             kind="episode",
-            title_id=None,
+            title_id=title_id,
             episode_id=episode_id,
             audio_id=audio_id,
             quality_id=quality_id,
@@ -732,7 +746,10 @@ async def find_variant(session: AsyncSession, parsed: ParsedVariant) -> MediaVar
             MediaVariant.episode_id.is_(None),
         )
     else:
-        query = query.where(MediaVariant.episode_id == parsed.episode_id)
+        query = query.where(
+            MediaVariant.title_id == parsed.title_id,
+            MediaVariant.episode_id == parsed.episode_id,
+        )
     result = await session.execute(query)
     return result.scalar_one_or_none()
 
@@ -741,7 +758,7 @@ async def finalize_file(file_path: Path, archive_dir: Path | None) -> None:
     if archive_dir:
         destination = unique_destination(archive_dir, file_path.name)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        file_path.rename(destination)
+        move_file(file_path, destination, action="archive_file")
     else:
         file_path.unlink(missing_ok=True)
 
@@ -749,7 +766,7 @@ async def finalize_file(file_path: Path, archive_dir: Path | None) -> None:
 async def move_to_failed(file_path: Path, failed_dir: Path | None, reason: str) -> None:
     logger.warning(
         "move to failed",
-        extra={"file_path": file_path.name, "reason": reason},
+        extra={"ingest_filename": file_path.name, "reason": reason},
     )
     if not failed_dir:
         return
@@ -757,20 +774,29 @@ async def move_to_failed(file_path: Path, failed_dir: Path | None, reason: str) 
         return
     destination = unique_destination(failed_dir, file_path.name)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    move_file(file_path, destination, action="move_to_failed", reason=reason)
+
+
+def move_file(
+    source: Path,
+    destination: Path,
+    *,
+    action: str,
+    reason: str | None = None,
+) -> None:
     try:
-        file_path.rename(destination)
+        shutil.move(str(source), str(destination))
     except OSError as exc:
-        logger.info(
-            "rename failed, fallback to shutil.move",
-            extra={"file_path": file_path.name, "reason": reason, "error": str(exc)},
+        logger.exception(
+            "failed to move file",
+            extra={
+                "action": action,
+                "ingest_filename": source.name,
+                "destination": str(destination),
+                "reason": reason,
+                "error": str(exc),
+            },
         )
-        try:
-            shutil.move(str(file_path), destination)
-        except OSError as move_exc:
-            logger.exception(
-                "failed to move to failed",
-                extra={"file_path": file_path.name, "reason": reason, "error": str(move_exc)},
-            )
 
 
 def unique_destination(directory: Path, filename: str) -> Path:
