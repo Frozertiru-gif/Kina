@@ -141,7 +141,7 @@ async def auth_webapp(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
     try:
         parsed = (
-            _validate_init_data(init_data, bot_token)
+            _validate_init_data(init_data, bot_token, debug=True)
             if _is_webapp_strict()
             else _parse_init_data(init_data)
         )
