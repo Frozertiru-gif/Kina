@@ -1,7 +1,13 @@
+import asyncio
+import json
 import logging
+import os
+import uuid
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 from sqlalchemy import delete, func, or_, select
@@ -189,6 +195,201 @@ def _expected_filename(title_id: int, episode_id: int | None, audio_id: int, qua
     if episode_id is None:
         return f"title_{title_id}__a_{audio_id}__q_{quality_id}.mp4"
     return f"ep_{episode_id}__a_{audio_id}__q_{quality_id}.mp4"
+
+
+async def _validate_title_episode(
+    session: AsyncSession, title_id: int, episode_id: int | None
+) -> None:
+    title = await session.get(Title, title_id)
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+    if episode_id is None:
+        return
+    episode = await session.get(Episode, episode_id)
+    if not episode:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
+    if episode.title_id != title_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch")
+
+
+def _parse_optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    if not str(value).strip():
+        return None
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_integer") from exc
+
+
+def _encode_multipart_form(fields: dict[str, str], files: dict[str, tuple[str, str, bytes]]) -> tuple[bytes, str]:
+    boundary = f"kina-{uuid.uuid4().hex}"
+    body = bytearray()
+    for name, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        body.extend(value.encode())
+        body.extend(b"\r\n")
+    for name, (filename, content_type, file_bytes) in files.items():
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
+        )
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode())
+        body.extend(file_bytes)
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+    return bytes(body), f"multipart/form-data; boundary={boundary}"
+
+
+def _send_telegram_request(
+    method: str,
+    bot_token: str,
+    fields: dict[str, str],
+    file_field: str,
+    file_payload: tuple[str, str, bytes],
+) -> dict:
+    url = f"https://api.telegram.org/bot{bot_token}/{method}"
+    body, content_type = _encode_multipart_form(fields, {file_field: file_payload})
+    request = urllib.request.Request(url, data=body, headers={"Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(request) as response:
+            raw = response.read()
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError:
+        payload = {"ok": False, "description": raw.decode("utf-8", errors="ignore")}
+    return payload
+
+
+async def _upload_to_telegram(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str | None,
+    caption: str | None,
+) -> tuple[str, int, int]:
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
+    storage_chat_id = os.getenv("TELEGRAM_STORAGE_CHAT_ID") or os.getenv("STORAGE_CHAT_ID")
+    if not storage_chat_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="storage_chat_id_missing"
+        )
+    fields = {"chat_id": storage_chat_id}
+    if caption:
+        fields["caption"] = caption
+    payload = await asyncio.to_thread(
+        _send_telegram_request,
+        "sendVideo",
+        bot_token,
+        fields,
+        "video",
+        (filename, content_type or "application/octet-stream", file_bytes),
+    )
+    if not payload.get("ok"):
+        payload = await asyncio.to_thread(
+            _send_telegram_request,
+            "sendDocument",
+            bot_token,
+            fields,
+            "document",
+            (filename, content_type or "application/octet-stream", file_bytes),
+        )
+    if not payload.get("ok"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=payload.get("description") or "telegram_upload_failed",
+        )
+    result = payload.get("result") or {}
+    message_id = result.get("message_id")
+    chat = result.get("chat") or {}
+    chat_id = chat.get("id")
+    file_id = None
+    if result.get("video"):
+        file_id = result["video"].get("file_id")
+    if not file_id and result.get("document"):
+        file_id = result["document"].get("file_id")
+    if not (file_id and message_id and chat_id):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="telegram_upload_missing_data"
+        )
+    return file_id, message_id, chat_id
+
+
+async def _attach_variant_file_internal(
+    payload: VariantAttachFile, admin_info: dict, session: AsyncSession
+) -> VariantAttachFileResponse:
+    await _validate_title_episode(session, payload.title_id, payload.episode_id)
+
+    variant_query = select(MediaVariant).where(
+        MediaVariant.title_id == payload.title_id,
+        MediaVariant.audio_id == payload.audio_id,
+        MediaVariant.quality_id == payload.quality_id,
+    )
+    if payload.episode_id is None:
+        variant_query = variant_query.where(MediaVariant.episode_id.is_(None))
+    else:
+        variant_query = variant_query.where(MediaVariant.episode_id == payload.episode_id)
+    result = await session.execute(variant_query)
+    variant = result.scalar_one_or_none()
+    created = False
+    if variant is None:
+        variant = MediaVariant(
+            title_id=payload.title_id,
+            episode_id=payload.episode_id,
+            audio_id=payload.audio_id,
+            quality_id=payload.quality_id,
+            status="ready",
+            error=None,
+        )
+        session.add(variant)
+        created = True
+
+    variant.telegram_file_id = payload.telegram_file_id
+    variant.storage_message_id = payload.storage_message_id
+    variant.storage_chat_id = payload.storage_chat_id
+    variant.status = "ready"
+    variant.error = None
+
+    await session.flush()
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="attach_file",
+        entity_type="media_variant",
+        entity_id=variant.id,
+        metadata={
+            "title_id": variant.title_id,
+            "episode_id": variant.episode_id,
+            "audio_id": variant.audio_id,
+            "quality_id": variant.quality_id,
+            "created": created,
+        },
+    )
+    logger.info(
+        "admin attach file",
+        extra={
+            "action": "attach_file",
+            "variant_id": variant.id,
+            "title_id": variant.title_id,
+            "episode_id": variant.episode_id,
+            "audio_id": variant.audio_id,
+            "quality_id": variant.quality_id,
+        },
+    )
+    await session.commit()
+    await session.refresh(variant)
+    return VariantAttachFileResponse(
+        variant_id=variant.id,
+        status=variant.status,
+        telegram_file_id=variant.telegram_file_id or "",
+        storage_message_id=variant.storage_message_id,
+        storage_chat_id=variant.storage_chat_id,
+    )
 
 
 def _serialize_variant(variant: MediaVariant) -> dict:
@@ -854,87 +1055,73 @@ async def list_variants(
     }
 
 
+@router.post("/media/upload", response_model=VariantAttachFileResponse)
+async def upload_media(
+    file: UploadFile = File(...),
+    title_id: int = Form(...),
+    episode_id: str | None = Form(default=None),
+    audio_id: int = Form(...),
+    quality_id: int = Form(...),
+    caption: str | None = Form(default=None),
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> VariantAttachFileResponse:
+    episode_id_parsed = _parse_optional_int(episode_id)
+    await _validate_title_episode(session, title_id, episode_id_parsed)
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="empty_file")
+    logger.info(
+        "admin media upload start",
+        extra={
+            "action": "admin_media_upload_start",
+            "admin_id": admin_info.get("tg_user_id"),
+            "title_id": title_id,
+            "episode_id": episode_id_parsed,
+            "audio_id": audio_id,
+            "quality_id": quality_id,
+            "filename": file.filename,
+            "size": len(file_bytes),
+        },
+    )
+    file_id, message_id, chat_id = await _upload_to_telegram(
+        file_bytes, file.filename or "upload.bin", file.content_type, caption
+    )
+    logger.info(
+        "admin media upload tg ok",
+        extra={
+            "action": "admin_media_upload_tg_ok",
+            "storage_message_id": message_id,
+            "file_id": file_id,
+        },
+    )
+    response = await _attach_variant_file_internal(
+        VariantAttachFile(
+            title_id=title_id,
+            episode_id=episode_id_parsed,
+            audio_id=audio_id,
+            quality_id=quality_id,
+            telegram_file_id=file_id,
+            storage_message_id=message_id,
+            storage_chat_id=chat_id,
+        ),
+        admin_info,
+        session,
+    )
+    logger.info(
+        "admin media upload done",
+        extra={"action": "admin_media_upload_done", "variant_id": response.variant_id},
+    )
+    return response
+
+
 @router.post("/media/attach_file", response_model=VariantAttachFileResponse)
 async def attach_variant_file(
     payload: VariantAttachFile,
     admin_info: dict = Depends(get_admin_token),
     session: AsyncSession = Depends(get_db_session),
 ) -> VariantAttachFileResponse:
-    title = await session.get(Title, payload.title_id)
-    if not title:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
-    if payload.episode_id is not None:
-        episode = await session.get(Episode, payload.episode_id)
-        if not episode:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found")
-        if episode.title_id != payload.title_id:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="episode_title_mismatch")
-
-    variant_query = select(MediaVariant).where(
-        MediaVariant.title_id == payload.title_id,
-        MediaVariant.audio_id == payload.audio_id,
-        MediaVariant.quality_id == payload.quality_id,
-    )
-    if payload.episode_id is None:
-        variant_query = variant_query.where(MediaVariant.episode_id.is_(None))
-    else:
-        variant_query = variant_query.where(MediaVariant.episode_id == payload.episode_id)
-    result = await session.execute(variant_query)
-    variant = result.scalar_one_or_none()
-    created = False
-    if variant is None:
-        variant = MediaVariant(
-            title_id=payload.title_id,
-            episode_id=payload.episode_id,
-            audio_id=payload.audio_id,
-            quality_id=payload.quality_id,
-            status="ready",
-            error=None,
-        )
-        session.add(variant)
-        created = True
-
-    variant.telegram_file_id = payload.telegram_file_id
-    variant.storage_message_id = payload.storage_message_id
-    variant.storage_chat_id = payload.storage_chat_id
-    variant.status = "ready"
-    variant.error = None
-
-    await session.flush()
-    await _log_admin_event(
-        session,
-        admin_info,
-        action="attach_file",
-        entity_type="media_variant",
-        entity_id=variant.id,
-        metadata={
-            "title_id": variant.title_id,
-            "episode_id": variant.episode_id,
-            "audio_id": variant.audio_id,
-            "quality_id": variant.quality_id,
-            "created": created,
-        },
-    )
-    logger.info(
-        "admin attach file",
-        extra={
-            "action": "attach_file",
-            "variant_id": variant.id,
-            "title_id": variant.title_id,
-            "episode_id": variant.episode_id,
-            "audio_id": variant.audio_id,
-            "quality_id": variant.quality_id,
-        },
-    )
-    await session.commit()
-    await session.refresh(variant)
-    return VariantAttachFileResponse(
-        variant_id=variant.id,
-        status=variant.status,
-        telegram_file_id=variant.telegram_file_id or "",
-        storage_message_id=variant.storage_message_id,
-        storage_chat_id=variant.storage_chat_id,
-    )
+    return await _attach_variant_file_internal(payload, admin_info, session)
 
 
 @router.get("/users")
