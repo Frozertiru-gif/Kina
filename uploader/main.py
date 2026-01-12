@@ -65,6 +65,7 @@ class ParsedVariant:
 
 MOVIE_PATTERN = re.compile(r"^title_(\d+)_{1,2}a_(\d+)_{1,2}q_(\d+)\.mp4$")
 EPISODE_PATTERN = re.compile(r"^title_(\d+)_{1,2}e_(\d+)_{1,2}a_(\d+)_{1,2}q_(\d+)\.mp4$")
+FILENAME_SUFFIX_PATTERN = re.compile(r"(?:\s*(?:—|-)?\s*копия|\s*\(1\))$", re.IGNORECASE)
 
 
 logger = logging.getLogger("kina.uploader")
@@ -238,6 +239,18 @@ async def scan_ingest(
         if not file_path.is_file():
             continue
         total_files += 1
+        can_read, exc_type = can_read_file(file_path)
+        if not can_read:
+            logger.info(
+                "file locked, skipping ingest",
+                extra={
+                    "action": "ingest_skip_locked",
+                    "request_id": "scan_ingest",
+                    "ingest_filename": file_path.name,
+                    "exc_type": exc_type,
+                },
+            )
+            continue
         if not await is_file_ready(file_path):
             not_ready_files += 1
             logger.info(
@@ -277,7 +290,7 @@ async def scan_ingest(
                     "action": "invalid_ingest_filename",
                     "request_id": "scan_ingest",
                     "ingest_filename": file_path.name,
-                    "reason": "invalid_filename",
+                    "reason": "bad_filename",
                     "expected_format": (
                         "title_{id}__a_{audio_id}__q_{quality_id}.mp4 or "
                         "title_{id}_a_{audio_id}_q_{quality_id}.mp4 or "
@@ -286,7 +299,7 @@ async def scan_ingest(
                     ),
                 },
             )
-            await move_to_failed(file_path, failed_dir, reason="invalid_filename")
+            await move_to_failed(file_path, failed_dir, reason="bad_filename")
             continue
         matched_files += 1
 
@@ -454,12 +467,35 @@ async def handle_job(
         await session.commit()
 
     try:
+        size_bytes = file_path.stat().st_size
+        logger.info(
+            "upload start",
+            extra={
+                "action": "upload_start",
+                "request_id": f"job:{job.id}",
+                "job_id": job.id,
+                "variant_id": job.variant_id,
+                "filepath": str(file_path),
+                "filesize": size_bytes,
+                "storage_chat_id": settings.storage_chat_id,
+            },
+        )
         message_id, file_id = await send_video(
             settings=settings,
             variant_id=job.variant_id,
             file_path=file_path,
         )
     except UploadError as exc:
+        logger.error(
+            "upload error",
+            exc_info=True,
+            extra={
+                "action": "upload_error",
+                "request_id": f"job:{job.id}",
+                "job_id": job.id,
+                "variant_id": job.variant_id,
+            },
+        )
         logger.warning(
             "upload error",
             extra={
@@ -484,6 +520,16 @@ async def handle_job(
         )
         return
     except Exception as exc:
+        logger.error(
+            "upload error",
+            exc_info=True,
+            extra={
+                "action": "upload_error",
+                "request_id": f"job:{job.id}",
+                "job_id": job.id,
+                "variant_id": job.variant_id,
+            },
+        )
         await handle_upload_error(
             settings=settings,
             session_factory=session_factory,
@@ -496,7 +542,6 @@ async def handle_job(
         )
         return
 
-    size_bytes = file_path.stat().st_size
     async with session_factory() as session:
         variant = await session.get(MediaVariant, job.variant_id)
         if variant is None:
@@ -509,9 +554,9 @@ async def handle_job(
             await move_to_failed(file_path, failed_dir, reason="variant_missing")
             return
         variant.telegram_file_id = file_id
+        variant.status = "ready"
         variant.storage_chat_id = settings.storage_chat_id
         variant.storage_message_id = message_id
-        variant.status = "ready"
         variant.size_bytes = size_bytes
         variant.error = None
 
@@ -541,12 +586,13 @@ async def handle_job(
     logger.info(
         "upload success",
         extra={
-            "action": "upload_job_done",
+            "action": "upload_success",
             "request_id": f"job:{job.id}",
             "job_id": job.id,
             "variant_id": job.variant_id,
             "file_path": file_path.name,
             "message_id": message_id,
+            "telegram_file_id": file_id,
         },
     )
 
@@ -769,7 +815,8 @@ async def notify_subscribers_if_needed(
 
 
 def parse_variant_filename(filename: str) -> ParsedVariant | None:
-    movie_match = MOVIE_PATTERN.match(filename)
+    normalized = normalize_variant_filename(filename)
+    movie_match = MOVIE_PATTERN.match(normalized)
     if movie_match:
         title_id, audio_id, quality_id = map(int, movie_match.groups())
         return ParsedVariant(
@@ -780,7 +827,7 @@ def parse_variant_filename(filename: str) -> ParsedVariant | None:
             quality_id=quality_id,
         )
 
-    episode_match = EPISODE_PATTERN.match(filename)
+    episode_match = EPISODE_PATTERN.match(normalized)
     if episode_match:
         title_id, episode_id, audio_id, quality_id = map(int, episode_match.groups())
         return ParsedVariant(
@@ -792,6 +839,17 @@ def parse_variant_filename(filename: str) -> ParsedVariant | None:
         )
 
     return None
+
+
+def normalize_variant_filename(filename: str) -> str:
+    path = Path(filename)
+    stem = path.stem
+    while True:
+        cleaned = FILENAME_SUFFIX_PATTERN.sub("", stem)
+        if cleaned == stem:
+            break
+        stem = cleaned
+    return f"{stem}{path.suffix}"
 
 
 async def find_variant(session: AsyncSession, parsed: ParsedVariant) -> MediaVariant | None:
@@ -814,6 +872,16 @@ async def find_variant(session: AsyncSession, parsed: ParsedVariant) -> MediaVar
 
 
 async def finalize_file(file_path: Path, archive_dir: Path | None) -> None:
+    can_read, _ = can_read_file(file_path)
+    if not can_read:
+        logger.info(
+            "move deferred, file locked",
+            extra={
+                "action": "move_deferred_locked",
+                "ingest_filename": file_path.name,
+            },
+        )
+        return
     if archive_dir:
         destination = unique_destination(archive_dir, file_path.name)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -830,6 +898,16 @@ async def move_to_failed(file_path: Path, failed_dir: Path | None, reason: str) 
     if not failed_dir:
         return
     if not file_path.exists():
+        return
+    can_read, _ = can_read_file(file_path)
+    if not can_read:
+        logger.info(
+            "move deferred, file locked",
+            extra={
+                "action": "move_deferred_locked",
+                "ingest_filename": file_path.name,
+            },
+        )
         return
     destination = unique_destination(failed_dir, file_path.name)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -848,10 +926,24 @@ def move_file(
         try:
             shutil.move(str(source), str(destination))
             return
-        except (PermissionError, FileNotFoundError) as exc:
+        except PermissionError as exc:
             if attempt >= len(backoff_seconds):
-                logger.exception(
-                    "failed to move file after retries",
+                logger.info(
+                    "move deferred, file locked",
+                    extra={
+                        "action": "move_deferred_locked",
+                        "ingest_filename": source.name,
+                        "destination": str(destination),
+                        "reason": reason,
+                        "attempts": attempt + 1,
+                    },
+                )
+                return
+            time.sleep(backoff_seconds[attempt])
+        except FileNotFoundError as exc:
+            if attempt >= len(backoff_seconds):
+                logger.warning(
+                    "file missing during move",
                     extra={
                         "action": action,
                         "ingest_filename": source.name,
@@ -908,20 +1000,21 @@ async def is_file_ready(file_path: Path) -> bool:
         return False
     if not file_path.exists():
         return False
-    age_seconds = time.time() - stat_before.st_mtime
-    if age_seconds < 1:
-        return False
-    try:
-        with file_path.open("rb"):
-            pass
-    except OSError:
-        return False
     await asyncio.sleep(1)
     try:
         stat_after = file_path.stat()
     except OSError:
         return False
-    return stat_before.st_size == stat_after.st_size and stat_before.st_mtime == stat_after.st_mtime
+    return stat_before.st_size == stat_after.st_size
+
+
+def can_read_file(file_path: Path) -> tuple[bool, str | None]:
+    try:
+        with file_path.open("rb") as handle:
+            handle.read(8192)
+    except (PermissionError, OSError) as exc:
+        return False, exc.__class__.__name__
+    return True, None
 
 
 if __name__ == "__main__":

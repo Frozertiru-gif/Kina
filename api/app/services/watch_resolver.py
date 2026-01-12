@@ -17,6 +17,8 @@ class ResolveResult:
 
 @dataclass(frozen=True)
 class ResolveNotFound:
+    error: str
+    debug: dict
     available_variants: list[dict]
     available_audio_ids: list[int]
     available_quality_ids: list[int]
@@ -91,17 +93,17 @@ async def _find_variant_with_status(
     audio_id: int,
     quality_id: int,
 ) -> MediaVariant | None:
-    for status in ("ready", "pending"):
-        variant_query = select(MediaVariant).where(
-            *base_filters,
-            MediaVariant.audio_id == audio_id,
-            MediaVariant.quality_id == quality_id,
-            MediaVariant.status == status,
-        )
-        variant_result = await session.execute(variant_query)
-        variant = variant_result.scalar_one_or_none()
-        if variant:
-            return variant
+    variant_query = select(MediaVariant).where(
+        *base_filters,
+        MediaVariant.audio_id == audio_id,
+        MediaVariant.quality_id == quality_id,
+        MediaVariant.status == "ready",
+        MediaVariant.telegram_file_id.is_not(None),
+    )
+    variant_result = await session.execute(variant_query)
+    variant = variant_result.scalar_one_or_none()
+    if variant:
+        return variant
     return None
 
 
@@ -114,43 +116,43 @@ async def _find_best_variant(
     preferred_audio_id: int | None,
     preferred_quality_id: int | None,
 ) -> MediaVariant | None:
-    for status in ("ready", "pending"):
-        order_clauses = []
-        if preferred_audio_id is not None:
-            order_clauses.append((MediaVariant.audio_id == preferred_audio_id).desc())
-        else:
-            order_clauses.append(AudioTrack.id.asc())
-        if preferred_quality_id is not None:
-            order_clauses.append((MediaVariant.quality_id == preferred_quality_id).desc())
-        order_clauses.append(Quality.height.desc())
-        order_clauses.append(MediaVariant.id.asc())
-        variant_query = (
-            select(MediaVariant)
-            .join(AudioTrack, AudioTrack.id == MediaVariant.audio_id)
-            .join(Quality, Quality.id == MediaVariant.quality_id)
-            .where(
-                *base_filters,
-                *(
-                    [MediaVariant.audio_id == required_audio_id]
-                    if required_audio_id is not None
-                    else []
-                ),
-                *(
-                    [MediaVariant.quality_id == required_quality_id]
-                    if required_quality_id is not None
-                    else []
-                ),
-                MediaVariant.status == status,
-                AudioTrack.is_active.is_(True),
-                Quality.is_active.is_(True),
-            )
-            .order_by(*order_clauses)
-            .limit(1)
+    order_clauses = []
+    if preferred_audio_id is not None:
+        order_clauses.append((MediaVariant.audio_id == preferred_audio_id).desc())
+    else:
+        order_clauses.append(AudioTrack.id.asc())
+    if preferred_quality_id is not None:
+        order_clauses.append((MediaVariant.quality_id == preferred_quality_id).desc())
+    order_clauses.append(Quality.height.desc())
+    order_clauses.append(MediaVariant.id.asc())
+    variant_query = (
+        select(MediaVariant)
+        .join(AudioTrack, AudioTrack.id == MediaVariant.audio_id)
+        .join(Quality, Quality.id == MediaVariant.quality_id)
+        .where(
+            *base_filters,
+            *(
+                [MediaVariant.audio_id == required_audio_id]
+                if required_audio_id is not None
+                else []
+            ),
+            *(
+                [MediaVariant.quality_id == required_quality_id]
+                if required_quality_id is not None
+                else []
+            ),
+            MediaVariant.status == "ready",
+            MediaVariant.telegram_file_id.is_not(None),
+            AudioTrack.is_active.is_(True),
+            Quality.is_active.is_(True),
         )
-        variant_result = await session.execute(variant_query)
-        variant = variant_result.scalar_one_or_none()
-        if variant:
-            return variant
+        .order_by(*order_clauses)
+        .limit(1)
+    )
+    variant_result = await session.execute(variant_query)
+    variant = variant_result.scalar_one_or_none()
+    if variant:
+        return variant
     return None
 
 
@@ -166,6 +168,12 @@ async def _build_available_payload(
         availability_query = availability_query.where(MediaVariant.episode_id == episode_id)
     availability_result = await session.execute(availability_query)
     available_variants = availability_result.scalars().all()
+    ready_variants = [
+        item for item in available_variants if item.status == "ready"
+    ]
+    variants_with_file = [
+        item for item in available_variants if item.telegram_file_id is not None
+    ]
     audio_ids = sorted({item.audio_id for item in available_variants})
     quality_ids = sorted({item.quality_id for item in available_variants})
     variants_payload = [
@@ -177,6 +185,12 @@ async def _build_available_payload(
         for item in available_variants
     ]
     return ResolveNotFound(
+        error="no_ready_variant_with_file",
+        debug={
+            "total_variants": len(available_variants),
+            "ready_variants": len(ready_variants),
+            "variants_with_file": len(variants_with_file),
+        },
         available_variants=variants_payload,
         available_audio_ids=audio_ids,
         available_quality_ids=quality_ids,
