@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_admin_token, get_db_session
@@ -343,6 +343,32 @@ async def update_title(
     return {"id": title.id}
 
 
+@router.delete("/titles/{title_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_title(
+    title_id: int,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    title = await session.get(Title, title_id)
+    if not title:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="title_not_found")
+    variant_ids = select(MediaVariant.id).where(MediaVariant.title_id == title_id)
+    await session.execute(delete(UploadJob).where(UploadJob.variant_id.in_(variant_ids)))
+    await session.execute(delete(MediaVariant).where(MediaVariant.title_id == title_id))
+    await session.execute(delete(Episode).where(Episode.title_id == title_id))
+    await session.execute(delete(Season).where(Season.title_id == title_id))
+    await session.delete(title)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="title_deleted",
+        entity_type="title",
+        entity_id=title_id,
+        metadata={"name": title.name},
+    )
+    await session.commit()
+
+
 @router.post("/titles/{title_id}/seasons", status_code=status.HTTP_201_CREATED)
 async def create_season(
     title_id: int,
@@ -528,6 +554,36 @@ async def update_audio_track(
     return {"id": track.id}
 
 
+@router.delete("/audio_tracks/{track_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_audio_track(
+    track_id: int,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    track = await session.get(AudioTrack, track_id)
+    if not track:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="audio_track_not_found")
+    usage_result = await session.execute(
+        select(func.count()).select_from(MediaVariant).where(MediaVariant.audio_id == track_id)
+    )
+    usage_count = usage_result.scalar_one()
+    if usage_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "in_use", "count": usage_count},
+        )
+    await session.delete(track)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="audio_track_deleted",
+        entity_type="audio_track",
+        entity_id=track_id,
+        metadata={"code": track.code},
+    )
+    await session.commit()
+
+
 @router.get("/qualities")
 async def list_qualities(
     limit: int = Query(default=100, ge=1, le=200),
@@ -603,6 +659,36 @@ async def update_quality(
     await session.commit()
     await session.refresh(quality)
     return {"id": quality.id}
+
+
+@router.delete("/qualities/{quality_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_quality(
+    quality_id: int,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    quality = await session.get(Quality, quality_id)
+    if not quality:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="quality_not_found")
+    usage_result = await session.execute(
+        select(func.count()).select_from(MediaVariant).where(MediaVariant.quality_id == quality_id)
+    )
+    usage_count = usage_result.scalar_one()
+    if usage_count:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "in_use", "count": usage_count},
+        )
+    await session.delete(quality)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="quality_deleted",
+        entity_type="quality",
+        entity_id=quality_id,
+        metadata={"height": quality.height},
+    )
+    await session.commit()
 
 
 @router.post("/variants", status_code=status.HTTP_201_CREATED)
@@ -687,6 +773,28 @@ async def update_variant(
     await session.commit()
     await session.refresh(variant)
     return _serialize_variant(variant)
+
+
+@router.delete("/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_variant(
+    variant_id: int,
+    admin_info: dict = Depends(get_admin_token),
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    variant = await session.get(MediaVariant, variant_id)
+    if not variant:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
+    await session.execute(delete(UploadJob).where(UploadJob.variant_id == variant_id))
+    await session.delete(variant)
+    await _log_admin_event(
+        session,
+        admin_info,
+        action="variant_deleted",
+        entity_type="media_variant",
+        entity_id=variant_id,
+        metadata={"title_id": variant.title_id, "episode_id": variant.episode_id},
+    )
+    await session.commit()
 
 
 @router.get("/variants")

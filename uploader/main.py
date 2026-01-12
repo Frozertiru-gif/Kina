@@ -4,6 +4,7 @@ import logging
 import mimetypes
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -40,7 +41,7 @@ class Settings(BaseSettings):
     bot_token: str
     storage_chat_id: int
 
-    use_local_bot_api: bool = True
+    use_local_bot_api: bool = False
     local_bot_api_base_url: str = "http://local-bot-api:8081"
     telegram_api_base_url: str = "https://api.telegram.org"
 
@@ -125,6 +126,7 @@ async def main() -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
 
+    base_url = _resolve_telegram_base_url(settings)
     logger.info(
         "uploader started",
         extra={
@@ -134,6 +136,8 @@ async def main() -> None:
             "archive_dir": str(archive_dir) if archive_dir else None,
             "failed_dir": str(failed_dir) if failed_dir else None,
             "max_concurrent": settings.upload_max_concurrent,
+            "telegram_base_url": base_url,
+            "storage_chat_id": settings.storage_chat_id,
         },
     )
 
@@ -225,8 +229,24 @@ async def scan_ingest(
     failed_dir: Path | None,
 ) -> None:
     max_bytes = settings.upload_max_file_mb * 1024 * 1024
+    total_files = 0
+    matched_files = 0
+    not_ready_files = 0
+    queued_jobs = 0
     for file_path in sorted(ingest_dir.iterdir()):
         if not file_path.is_file():
+            continue
+        total_files += 1
+        if not await is_file_ready(file_path):
+            not_ready_files += 1
+            logger.info(
+                "file not ready yet",
+                extra={
+                    "action": "ingest_file_not_ready",
+                    "request_id": "scan_ingest",
+                    "ingest_filename": file_path.name,
+                },
+            )
             continue
         resolved = str(file_path.resolve())
         async with session_factory() as session:
@@ -250,8 +270,22 @@ async def scan_ingest(
 
         parsed = parse_variant_filename(file_path.name)
         if parsed is None:
+            logger.warning(
+                "invalid ingest filename",
+                extra={
+                    "action": "invalid_ingest_filename",
+                    "request_id": "scan_ingest",
+                    "ingest_filename": file_path.name,
+                    "reason": "invalid_filename",
+                    "expected_format": (
+                        "title_{id}__a_{audio_id}__q_{quality_id}.mp4 or "
+                        "title_{id}__e_{episode_id}__a_{audio_id}__q_{quality_id}.mp4"
+                    ),
+                },
+            )
             await move_to_failed(file_path, failed_dir, reason="invalid_filename")
             continue
+        matched_files += 1
 
         async with session_factory() as session:
             variant = await find_variant(session, parsed)
@@ -280,6 +314,7 @@ async def scan_ingest(
             )
             session.add(job)
             await session.commit()
+            queued_jobs += 1
             logger.info(
                 "job queued",
                 extra={
@@ -288,6 +323,17 @@ async def scan_ingest(
                     "file_path": file_path.name,
                 },
             )
+    logger.info(
+        "ingest scan complete",
+        extra={
+            "action": "ingest_scan_complete",
+            "request_id": "scan_ingest",
+            "total_files": total_files,
+            "matched_files": matched_files,
+            "not_ready_files": not_ready_files,
+            "queued_jobs": queued_jobs,
+        },
+    )
 
 
 async def worker_loop(
@@ -585,10 +631,7 @@ async def send_video(
     variant_id: int,
     file_path: Path,
 ) -> tuple[int, str]:
-    if settings.use_local_bot_api:
-        base_url = settings.local_bot_api_base_url.rstrip("/")
-    else:
-        base_url = settings.telegram_api_base_url.rstrip("/")
+    base_url = _resolve_telegram_base_url(settings)
     url = f"{base_url}/bot{settings.bot_token}/sendVideo"
 
     mime_type, _ = mimetypes.guess_type(file_path.name)
@@ -784,19 +827,38 @@ def move_file(
     action: str,
     reason: str | None = None,
 ) -> None:
-    try:
-        shutil.move(str(source), str(destination))
-    except OSError as exc:
-        logger.exception(
-            "failed to move file",
-            extra={
-                "action": action,
-                "ingest_filename": source.name,
-                "destination": str(destination),
-                "reason": reason,
-                "error": str(exc),
-            },
-        )
+    backoff_seconds = [0.5, 1, 2, 4, 8]
+    for attempt in range(len(backoff_seconds) + 1):
+        try:
+            shutil.move(str(source), str(destination))
+            return
+        except PermissionError as exc:
+            if attempt >= len(backoff_seconds):
+                logger.exception(
+                    "failed to move file after retries",
+                    extra={
+                        "action": action,
+                        "ingest_filename": source.name,
+                        "destination": str(destination),
+                        "reason": reason,
+                        "error": str(exc),
+                        "attempts": attempt + 1,
+                    },
+                )
+                return
+            time.sleep(backoff_seconds[attempt])
+        except OSError as exc:
+            logger.exception(
+                "failed to move file",
+                extra={
+                    "action": action,
+                    "ingest_filename": source.name,
+                    "destination": str(destination),
+                    "reason": reason,
+                    "error": str(exc),
+                },
+            )
+            return
 
 
 def unique_destination(directory: Path, filename: str) -> Path:
@@ -815,6 +877,30 @@ def _prepare_optional_dir(path_value: str | None) -> Path | None:
     path = Path(path_value)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _resolve_telegram_base_url(settings: Settings) -> str:
+    if settings.use_local_bot_api and settings.local_bot_api_base_url:
+        return settings.local_bot_api_base_url.rstrip("/")
+    return settings.telegram_api_base_url.rstrip("/")
+
+
+async def is_file_ready(file_path: Path) -> bool:
+    try:
+        size_before = file_path.stat().st_size
+    except OSError:
+        return False
+    try:
+        with file_path.open("rb"):
+            pass
+    except OSError:
+        return False
+    await asyncio.sleep(1)
+    try:
+        size_after = file_path.stat().st_size
+    except OSError:
+        return False
+    return size_before == size_after
 
 
 if __name__ == "__main__":
