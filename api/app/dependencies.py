@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -16,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import SessionLocal
 from app.models import User, UserPremium
 from app.services.rate_limit import check_rate_limit, hash_token
+
+logger = logging.getLogger("kina.api")
 
 
 class CurrentUser(BaseModel):
@@ -64,6 +67,10 @@ def _parse_init_data(init_data: str, *, treat_plus_as_space: bool = True) -> dic
     return dict(pairs)
 
 
+def _is_webapp_debug_enabled() -> bool:
+    return os.getenv("AUTH_WEBAPP_DEBUG", "0") == "1"
+
+
 def _normalize_init_data_candidates(init_data: str) -> list[str]:
     normalized = init_data.strip()
     if normalized.startswith("?") or normalized.startswith("#"):
@@ -72,11 +79,10 @@ def _normalize_init_data_candidates(init_data: str) -> list[str]:
         for part in normalized.split("&"):
             if not part:
                 continue
-            if part.startswith("tgWebAppData="):
-                normalized = unquote(part.split("=", 1)[1])
+            key, _, value = part.partition("=")
+            if key == "tgWebAppData":
+                normalized = unquote(value)
                 break
-    if "%3D" in normalized or "%26" in normalized:
-        normalized = unquote(normalized)
     candidates = [normalized]
     if " " in normalized and "+" not in normalized:
         candidates.append(normalized.replace(" ", "+"))
@@ -87,7 +93,7 @@ def _normalize_init_data_candidates(init_data: str) -> list[str]:
     return deduped
 
 
-def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
+def _validate_init_data(init_data: str, bot_token: str, *, debug: bool = False) -> dict[str, Any]:
     variants: list[dict[str, Any]] = []
     for candidate in _normalize_init_data_candidates(init_data):
         variants.append(_parse_init_data(candidate))
@@ -95,13 +101,35 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
 
     has_hash = False
     bad_hash_format = False
+    has_auth_date = False
+    has_user = False
+    failure_reason = "hash_mismatch"
+
+    def _log_failure(reason: str) -> None:
+        if debug and _is_webapp_debug_enabled():
+            logger.info(
+                "init data validation failed",
+                extra={
+                    "action": "init_data_validation_failed",
+                    "reason": reason,
+                    "init_data_len": len(init_data),
+                    "has_hash": has_hash,
+                    "has_auth_date": has_auth_date,
+                    "has_user": has_user,
+                },
+            )
     for parsed in variants:
+        if parsed.get("auth_date"):
+            has_auth_date = True
+        if parsed.get("user"):
+            has_user = True
         provided_hash = parsed.get("hash")
         if provided_hash is None:
             continue
         has_hash = True
         if not re.fullmatch(r"[0-9a-f]{64}", str(provided_hash)):
             bad_hash_format = True
+            failure_reason = "bad_hash_format"
             continue
         data_check_string = "\n".join(
             f"{key}={value}" for key, value in sorted(parsed.items()) if key != "hash"
@@ -111,9 +139,12 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
             secret, data_check_string.encode("utf-8"), hashlib.sha256
         ).hexdigest()
         if not hmac.compare_digest(calculated_hash, provided_hash):
+            failure_reason = "hash_mismatch"
             continue
         auth_date_raw = parsed.get("auth_date")
         if not auth_date_raw:
+            failure_reason = "auth_date_missing"
+            _log_failure(failure_reason)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="init_data_invalid",
@@ -121,6 +152,8 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
         try:
             auth_date = int(auth_date_raw)
         except (TypeError, ValueError) as exc:
+            failure_reason = "parse_error"
+            _log_failure(failure_reason)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="init_data_invalid",
@@ -129,11 +162,15 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
         max_age = int(os.getenv("AUTH_WEBAPP_MAX_AGE_SECONDS", "86400"))
         clock_skew = int(os.getenv("AUTH_WEBAPP_CLOCK_SKEW_SECONDS", "120"))
         if auth_date > now_ts + clock_skew:
+            failure_reason = "clock_skew"
+            _log_failure(failure_reason)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="clock_skew",
             )
         if now_ts - auth_date > max_age:
+            failure_reason = "expired"
+            _log_failure(failure_reason)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="init_data_expired",
@@ -141,15 +178,18 @@ def _validate_init_data(init_data: str, bot_token: str) -> dict[str, Any]:
         return parsed
 
     if bad_hash_format:
+        _log_failure("bad_hash_format")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="bad_hash_format",
         )
     if not has_hash:
+        _log_failure("missing_hash")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="init_data_invalid",
         )
+    _log_failure(failure_reason)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="init_data_invalid",
