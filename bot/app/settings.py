@@ -32,13 +32,13 @@ def load_settings() -> Settings:
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise SystemExit("DATABASE_URL is required")
-    public_base_url = os.getenv("PUBLIC_BASE_URL")
-    if public_base_url:
-        webapp_url = f"{public_base_url.rstrip('/')}/"
-    else:
-        webapp_url = os.getenv("WEBAPP_URL")
-        if not webapp_url:
-            raise SystemExit("WEBAPP_URL is required when PUBLIC_BASE_URL is not set")
+    webapp_url = os.getenv("WEBAPP_URL")
+    if not webapp_url:
+        public_base_url = os.getenv("PUBLIC_BASE_URL")
+        if public_base_url:
+            webapp_url = f"{public_base_url.rstrip('/')}/"
+    if not webapp_url:
+        raise SystemExit("WEBAPP_URL or PUBLIC_BASE_URL is required")
     storage_chat_id = os.getenv("STORAGE_CHAT_ID")
     ingest_chat_id = os.getenv("INGEST_CHAT_ID")
     return Settings(

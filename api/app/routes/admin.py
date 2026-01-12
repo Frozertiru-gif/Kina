@@ -1080,7 +1080,7 @@ async def upload_media(
             "episode_id": episode_id_parsed,
             "audio_id": audio_id,
             "quality_id": quality_id,
-            "filename": file.filename,
+            "upload_filename": file.filename,
             "size": len(file_bytes),
         },
     )

@@ -37,13 +37,12 @@ async def get_db_session() -> AsyncSession:
 
 def _is_dev_bypass_allowed() -> bool:
     environment = os.getenv("ENVIRONMENT")
-    dev_bypass = os.getenv("DEV_AUTH_BYPASS", "false").lower() == "true"
-    return environment == "local" and dev_bypass
+    return environment in {"local", "development", "dev"}
 
 
-def _get_dev_user_id(x_dev_user_id: str | None) -> int:
-    if x_dev_user_id:
-        return int(x_dev_user_id)
+def _get_dev_user_id(dev_user_id: str | None) -> int:
+    if dev_user_id:
+        return int(dev_user_id)
     env_user_id = os.getenv("DEV_TG_USER_ID")
     if env_user_id:
         return int(env_user_id)

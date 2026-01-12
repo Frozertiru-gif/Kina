@@ -47,7 +47,7 @@ def series_keyboard(title_id: int, episode_id: int) -> InlineKeyboardMarkup:
 
 def start_keyboard(webapp_url: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="📺 Каталог", web_app=WebAppInfo(url=webapp_url))
+    builder.button(text="Каталог", web_app=WebAppInfo(url=webapp_url))
     builder.adjust(1)
     return builder.as_markup()
 

@@ -34,11 +34,11 @@ def build_router(
 ) -> Router:
     router = Router()
 
-    @router.message()
+    @router.message(
+        lambda message: settings.ingest_chat_id is not None
+        and message.chat.id == settings.ingest_chat_id
+    )
     async def on_ingest_message(message: Message) -> None:
-        # Keep this handler first; it must short-circuit for non-ingest messages.
-        if settings.ingest_chat_id is None or message.chat.id != settings.ingest_chat_id:
-            return
         has_video = message.video is not None
         has_document = message.document is not None
         if not has_video and not has_document:
@@ -173,7 +173,7 @@ def build_router(
             else:
                 await message.answer("Реферальный код не применён.")
         await message.answer(
-            "Добро пожаловать в Kina!",
+            "Открыть каталог",
             reply_markup=keyboards.start_keyboard(settings.webapp_url),
         )
         logger.info(
