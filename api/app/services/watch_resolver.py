@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import AudioTrack, MediaVariant, Quality, UserState
@@ -40,62 +40,40 @@ async def resolve_watch_variant(
     preferred_audio_id = state.preferred_audio_id if state else None
     preferred_quality_id = state.preferred_quality_id if state else None
 
+    requested_audio_id = audio_id
+    requested_quality_id = quality_id
     resolved_audio_id = audio_id or preferred_audio_id
     resolved_quality_id = quality_id or preferred_quality_id
 
-    if resolved_audio_id is None:
-        audio_query = (
-            select(func.min(MediaVariant.audio_id))
-            .join(AudioTrack, AudioTrack.id == MediaVariant.audio_id)
-            .where(
-                MediaVariant.title_id == title_id,
-                AudioTrack.is_active.is_(True),
-                MediaVariant.status.in_(["pending", "ready"]),
-            )
-        )
-        if episode_id is None:
-            audio_query = audio_query.where(MediaVariant.episode_id.is_(None))
-        else:
-            audio_query = audio_query.where(MediaVariant.episode_id == episode_id)
-        audio_result = await session.execute(audio_query)
-        resolved_audio_id = audio_result.scalar_one_or_none()
-
-    if resolved_quality_id is None:
-        quality_query = (
-            select(Quality.id)
-            .join(MediaVariant, MediaVariant.quality_id == Quality.id)
-            .where(
-                MediaVariant.title_id == title_id,
-                Quality.is_active.is_(True),
-                MediaVariant.status.in_(["pending", "ready"]),
-            )
-            .order_by(Quality.height.desc(), Quality.id.asc())
-            .limit(1)
-        )
-        if episode_id is None:
-            quality_query = quality_query.where(MediaVariant.episode_id.is_(None))
-        else:
-            quality_query = quality_query.where(MediaVariant.episode_id == episode_id)
-        quality_result = await session.execute(quality_query)
-        resolved_quality_id = quality_result.scalar_one_or_none()
+    base_filters = [MediaVariant.title_id == title_id]
+    if episode_id is None:
+        base_filters.append(MediaVariant.episode_id.is_(None))
+    else:
+        base_filters.append(MediaVariant.episode_id == episode_id)
 
     if resolved_audio_id is None or resolved_quality_id is None:
-        raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
-
-    variant_query = select(MediaVariant).where(
-        MediaVariant.audio_id == resolved_audio_id,
-        MediaVariant.quality_id == resolved_quality_id,
-        MediaVariant.status.in_(["pending", "ready"]),
-    )
-    if episode_id is None:
-        variant_query = variant_query.where(
-            MediaVariant.title_id == title_id,
-            MediaVariant.episode_id.is_(None),
+        best_variant = await _find_best_variant(
+            session=session,
+            base_filters=base_filters,
+            required_audio_id=requested_audio_id,
+            required_quality_id=requested_quality_id,
+            preferred_audio_id=resolved_audio_id,
+            preferred_quality_id=resolved_quality_id,
         )
-    else:
-        variant_query = variant_query.where(MediaVariant.episode_id == episode_id)
-    variant_result = await session.execute(variant_query)
-    variant = variant_result.scalar_one_or_none()
+        if best_variant is None:
+            raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
+        return ResolveResult(
+            variant_id=best_variant.id,
+            audio_id=best_variant.audio_id,
+            quality_id=best_variant.quality_id,
+        )
+
+    variant = await _find_variant_with_status(
+        session=session,
+        base_filters=base_filters,
+        audio_id=resolved_audio_id,
+        quality_id=resolved_quality_id,
+    )
     if not variant:
         raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
 
@@ -104,6 +82,76 @@ async def resolve_watch_variant(
         audio_id=resolved_audio_id,
         quality_id=resolved_quality_id,
     )
+
+
+async def _find_variant_with_status(
+    *,
+    session: AsyncSession,
+    base_filters: list,
+    audio_id: int,
+    quality_id: int,
+) -> MediaVariant | None:
+    for status in ("ready", "pending"):
+        variant_query = select(MediaVariant).where(
+            *base_filters,
+            MediaVariant.audio_id == audio_id,
+            MediaVariant.quality_id == quality_id,
+            MediaVariant.status == status,
+        )
+        variant_result = await session.execute(variant_query)
+        variant = variant_result.scalar_one_or_none()
+        if variant:
+            return variant
+    return None
+
+
+async def _find_best_variant(
+    *,
+    session: AsyncSession,
+    base_filters: list,
+    required_audio_id: int | None,
+    required_quality_id: int | None,
+    preferred_audio_id: int | None,
+    preferred_quality_id: int | None,
+) -> MediaVariant | None:
+    for status in ("ready", "pending"):
+        order_clauses = []
+        if preferred_audio_id is not None:
+            order_clauses.append((MediaVariant.audio_id == preferred_audio_id).desc())
+        else:
+            order_clauses.append(AudioTrack.id.asc())
+        if preferred_quality_id is not None:
+            order_clauses.append((MediaVariant.quality_id == preferred_quality_id).desc())
+        order_clauses.append(Quality.height.desc())
+        order_clauses.append(MediaVariant.id.asc())
+        variant_query = (
+            select(MediaVariant)
+            .join(AudioTrack, AudioTrack.id == MediaVariant.audio_id)
+            .join(Quality, Quality.id == MediaVariant.quality_id)
+            .where(
+                *base_filters,
+                *(
+                    [MediaVariant.audio_id == required_audio_id]
+                    if required_audio_id is not None
+                    else []
+                ),
+                *(
+                    [MediaVariant.quality_id == required_quality_id]
+                    if required_quality_id is not None
+                    else []
+                ),
+                MediaVariant.status == status,
+                AudioTrack.is_active.is_(True),
+                Quality.is_active.is_(True),
+            )
+            .order_by(*order_clauses)
+            .limit(1)
+        )
+        variant_result = await session.execute(variant_query)
+        variant = variant_result.scalar_one_or_none()
+        if variant:
+            return variant
+    return None
 
 
 async def _build_available_payload(
