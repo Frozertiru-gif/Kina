@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 
 const apiUrl = import.meta.env.VITE_API_URL ?? "/api";
 
@@ -39,6 +39,14 @@ type Variant = {
   telegram_file_id?: string | null;
   error?: string | null;
   expected_filename: string;
+};
+
+type VariantUploadResponse = {
+  variant_id: number;
+  status: string;
+  telegram_file_id: string;
+  storage_message_id?: number | null;
+  storage_chat_id?: number | null;
 };
 
 type AudioTrack = {
@@ -130,6 +138,31 @@ async function apiFetch<T>(
   return response.json() as Promise<T>;
 }
 
+async function apiUpload<T>(
+  path: string,
+  formData: FormData,
+  adminToken: string,
+  adminUserId: string,
+): Promise<T> {
+  const headers: HeadersInit = {};
+  if (adminToken) {
+    headers["X-Admin-Token"] = adminToken;
+  }
+  if (adminUserId) {
+    headers["X-Admin-User-Id"] = adminUserId;
+  }
+  const response = await fetch(`${apiUrl}${path}`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Ошибка запроса: ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 function formatDateInput(value?: string | null) {
   if (!value) return "";
   return value.slice(0, 10);
@@ -173,6 +206,8 @@ export default function App() {
         ),
       delete: <T,>(path: string) =>
         apiFetch<T>(path, { method: "DELETE" }, adminToken, adminUserId),
+      upload: <T,>(path: string, formData: FormData) =>
+        apiUpload<T>(path, formData, adminToken, adminUserId),
     }),
     [adminToken, adminUserId],
   );
@@ -1003,6 +1038,9 @@ function TitleVariants({
     quality_id: "",
     status: "pending",
   });
+  const [uploadingVariantId, setUploadingVariantId] = useState<number | null>(null);
+  const [pendingUploadVariant, setPendingUploadVariant] = useState<Variant | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const episodes = seasons.flatMap((season) => season.episodes);
 
@@ -1048,11 +1086,55 @@ function TitleVariants({
     }
   };
 
+  const handleUploadClick = (variant: Variant) => {
+    setPendingUploadVariant(variant);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !pendingUploadVariant) return;
+    setUploadingVariantId(pendingUploadVariant.id);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("title_id", String(pendingUploadVariant.title_id));
+      if (pendingUploadVariant.episode_id != null) {
+        formData.append("episode_id", String(pendingUploadVariant.episode_id));
+      }
+      formData.append("audio_id", String(pendingUploadVariant.audio_id));
+      formData.append("quality_id", String(pendingUploadVariant.quality_id));
+      const response = await api.upload<VariantUploadResponse>("/admin/media/upload", formData);
+      setVariants((prev) =>
+        prev.map((item) =>
+          item.id === response.variant_id
+            ? { ...item, status: response.status, telegram_file_id: response.telegram_file_id }
+            : item,
+        ),
+      );
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setUploadingVariantId(null);
+      setPendingUploadVariant(null);
+    }
+  };
+
   const audioMap = new Map(audioTracks.map((track) => [track.id, track]));
   const qualityMap = new Map(qualities.map((quality) => [quality.id, quality]));
 
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*"
+        onChange={handleFileChange}
+        style={{ display: "none" }}
+      />
       <div style={{ border: "1px solid #e5e7eb", borderRadius: "12px", padding: "1rem" }}>
         <h3>Создать вариант</h3>
         <select
@@ -1140,6 +1222,20 @@ function TitleVariants({
                   <span>{variant.status}</span>
                   <button
                     type="button"
+                    onClick={() => handleUploadClick(variant)}
+                    disabled={uploadingVariantId === variant.id}
+                    style={{
+                      background: "#dbeafe",
+                      color: "#1e3a8a",
+                      border: "1px solid #bfdbfe",
+                      padding: "0.25rem 0.6rem",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    {uploadingVariantId === variant.id ? "Загрузка..." : "Upload"}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDelete(variant.id)}
                     style={{
                       background: "#fee2e2",
@@ -1178,6 +1274,9 @@ function TitleVariants({
 function VariantsView({ api, onError }: { api: any; onError: (msg: string) => void }) {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [filters, setFilters] = useState({ title_id: "", episode_id: "", status: "" });
+  const [uploadingVariantId, setUploadingVariantId] = useState<number | null>(null);
+  const [pendingUploadVariant, setPendingUploadVariant] = useState<Variant | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = async () => {
     try {
@@ -1209,9 +1308,53 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
     }
   };
 
+  const handleUploadClick = (variant: Variant) => {
+    setPendingUploadVariant(variant);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !pendingUploadVariant) return;
+    setUploadingVariantId(pendingUploadVariant.id);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("title_id", String(pendingUploadVariant.title_id));
+      if (pendingUploadVariant.episode_id != null) {
+        formData.append("episode_id", String(pendingUploadVariant.episode_id));
+      }
+      formData.append("audio_id", String(pendingUploadVariant.audio_id));
+      formData.append("quality_id", String(pendingUploadVariant.quality_id));
+      const response = await api.upload<VariantUploadResponse>("/admin/media/upload", formData);
+      setVariants((prev) =>
+        prev.map((item) =>
+          item.id === response.variant_id
+            ? { ...item, status: response.status, telegram_file_id: response.telegram_file_id }
+            : item,
+        ),
+      );
+    } catch (err) {
+      onError((err as Error).message);
+    } finally {
+      setUploadingVariantId(null);
+      setPendingUploadVariant(null);
+    }
+  };
+
   return (
     <section>
       <h2>Варианты</h2>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="video/*"
+        onChange={handleFileChange}
+        style={{ display: "none" }}
+      />
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         <input
           placeholder="ID тайтла"
@@ -1270,6 +1413,21 @@ function VariantsView({ api, onError }: { api: any; onError: (msg: string) => vo
                 Копировать
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => handleUploadClick(variant)}
+              disabled={uploadingVariantId === variant.id}
+              style={{
+                width: "fit-content",
+                background: "#dbeafe",
+                color: "#1e3a8a",
+                border: "1px solid #bfdbfe",
+                padding: "0.35rem 0.75rem",
+                borderRadius: "6px",
+              }}
+            >
+              {uploadingVariantId === variant.id ? "Загрузка..." : "Upload"}
+            </button>
             <button
               type="button"
               onClick={() => handleDelete(variant.id)}
