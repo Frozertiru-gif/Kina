@@ -65,20 +65,22 @@ const readRawParamValue = (raw: string, key: string): string => {
   return "";
 };
 
+const normalizeUrlInitData = (value: string): string => value.replace(/ /g, "+");
+
 const readInitDataFromUrl = (): { value: string; source: InitDataSource } => {
   if (typeof window === "undefined") {
     return { value: "", source: null };
   }
   const searchValue = readRawParamValue(window.location.search, "tgWebAppData");
   if (searchValue) {
-    return { value: searchValue, source: "url-search" };
+    return { value: normalizeUrlInitData(searchValue), source: "url-search" };
   }
   const rawHash = window.location.hash.startsWith("#")
     ? window.location.hash.slice(1)
     : window.location.hash;
   const hashValue = readRawParamValue(rawHash, "tgWebAppData");
   if (hashValue) {
-    return { value: hashValue, source: "url-hash" };
+    return { value: normalizeUrlInitData(hashValue), source: "url-hash" };
   }
   return { value: "", source: null };
 };

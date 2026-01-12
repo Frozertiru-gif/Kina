@@ -124,7 +124,7 @@ async def auth_webapp(
         )
 
     if not init_data:
-        detail = "init_data_required" if _is_webapp_debug_enabled() else "unauthorized"
+        detail = "init_data_required"
         if _is_webapp_debug_enabled():
             logger.info(
                 "auth webapp rejected",
@@ -162,14 +162,13 @@ async def auth_webapp(
                     "status_code": exc.status_code,
                 },
             )
-            raise
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="unauthorized",
+            detail=exc.detail,
         ) from exc
     raw_user = parsed.get("user")
     if not raw_user:
-        detail = "init_data_user_missing" if _is_webapp_debug_enabled() else "unauthorized"
+        detail = "init_data_user_missing"
         if _is_webapp_debug_enabled():
             logger.info(
                 "auth webapp rejected",

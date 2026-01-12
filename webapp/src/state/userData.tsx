@@ -116,6 +116,8 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
                   ? "Ошибка времени устройства. Проверьте часы и перезапустите WebApp."
                   : detail === "bad_hash_format"
                     ? "initData повреждён. Откройте WebApp заново."
+                    : detail === "init_data_user_missing"
+                      ? "В initData отсутствует пользователь. Откройте WebApp заново."
                     : "Не удалось авторизоваться. Попробуйте позже.";
         setAuthError(message);
       } else {
