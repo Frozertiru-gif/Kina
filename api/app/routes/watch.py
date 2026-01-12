@@ -187,6 +187,16 @@ async def watch_dispatch(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"error": "ad_required"},
             )
+    mode = "direct" if premium_active else "ad_gate"
+    logger.info(
+        "watch dispatch",
+        extra={
+            "action": "watch_dispatch",
+            "user_id": user.id,
+            "variant_id": payload.variant_id,
+            "mode": mode,
+        },
+    )
     dedupe_key = f"vsend:{user.tg_user_id}:{payload.variant_id}"
     if not await setnx_with_ttl(dedupe_key, 120):
         return {"queued": False, "deduped": True}

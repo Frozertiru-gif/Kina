@@ -1,6 +1,7 @@
 import logging
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import keyboards
@@ -112,11 +113,44 @@ async def send_video_by_variant(
         )
         return
     keyboard = _build_keyboard(title, episode, variant.id)
-    message = await bot.send_video(
-        chat_id=tg_user_id,
-        video=variant.telegram_file_id,
-        caption=build_card_text(title, episode, variant, premium_until),
-        reply_markup=keyboard,
+    try:
+        message = await bot.send_video(
+            chat_id=tg_user_id,
+            video=variant.telegram_file_id,
+            caption=build_card_text(title, episode, variant, premium_until),
+            reply_markup=keyboard,
+        )
+    except TelegramBadRequest as exc:
+        logger.warning(
+            "Failed to send video: %s",
+            exc,
+            extra={
+                "action": "send_video_failed",
+                "variant_id": variant.id,
+                "tg_user_id": tg_user_id,
+            },
+        )
+        await _send_video_error_message(bot, tg_user_id)
+        return
+    except TelegramForbiddenError as exc:
+        logger.warning(
+            "Forbidden to send video: %s",
+            exc,
+            extra={
+                "action": "send_video_failed",
+                "variant_id": variant.id,
+                "tg_user_id": tg_user_id,
+            },
+        )
+        await _send_video_error_message(bot, tg_user_id)
+        return
+    logger.info(
+        "Video sent",
+        extra={
+            "action": "send_video_ok",
+            "variant_id": variant.id,
+            "tg_user_id": tg_user_id,
+        },
     )
     await set_user_preferences(
         session,
@@ -145,3 +179,20 @@ def _build_keyboard(
     if title.type == "series" and episode:
         return keyboards.series_keyboard(title.id, episode.id)
     return keyboards.movie_keyboard(title.id)
+
+
+async def _send_video_error_message(bot: Bot, tg_user_id: int) -> None:
+    try:
+        await bot.send_message(
+            chat_id=tg_user_id,
+            text="Не удалось отправить видео. Попробуйте позже или обновите запрос.",
+        )
+    except TelegramForbiddenError as exc:
+        logger.warning(
+            "Forbidden to send error message: %s",
+            exc,
+            extra={
+                "action": "send_video_failed_notice",
+                "tg_user_id": tg_user_id,
+            },
+        )
