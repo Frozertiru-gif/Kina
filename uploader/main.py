@@ -63,8 +63,8 @@ class ParsedVariant:
     quality_id: int
 
 
-MOVIE_PATTERN = re.compile(r"^title_(\d+)__a_(\d+)__q_(\d+)\.mp4$")
-EPISODE_PATTERN = re.compile(r"^title_(\d+)__e_(\d+)__a_(\d+)__q_(\d+)\.mp4$")
+MOVIE_PATTERN = re.compile(r"^title_(\d+)_{1,2}a_(\d+)_{1,2}q_(\d+)\.mp4$")
+EPISODE_PATTERN = re.compile(r"^title_(\d+)_{1,2}e_(\d+)_{1,2}a_(\d+)_{1,2}q_(\d+)\.mp4$")
 
 
 logger = logging.getLogger("kina.uploader")
@@ -137,6 +137,7 @@ async def main() -> None:
             "failed_dir": str(failed_dir) if failed_dir else None,
             "max_concurrent": settings.upload_max_concurrent,
             "telegram_base_url": base_url,
+            "use_local_bot_api": settings.use_local_bot_api,
             "storage_chat_id": settings.storage_chat_id,
         },
     )
@@ -279,7 +280,9 @@ async def scan_ingest(
                     "reason": "invalid_filename",
                     "expected_format": (
                         "title_{id}__a_{audio_id}__q_{quality_id}.mp4 or "
-                        "title_{id}__e_{episode_id}__a_{audio_id}__q_{quality_id}.mp4"
+                        "title_{id}_a_{audio_id}_q_{quality_id}.mp4 or "
+                        "title_{id}__e_{episode_id}__a_{audio_id}__q_{quality_id}.mp4 or "
+                        "title_{id}_e_{episode_id}_a_{audio_id}_q_{quality_id}.mp4"
                     ),
                 },
             )
@@ -457,6 +460,18 @@ async def handle_job(
             file_path=file_path,
         )
     except UploadError as exc:
+        logger.warning(
+            "upload error",
+            extra={
+                "action": "upload_job_error",
+                "request_id": f"job:{job.id}",
+                "job_id": job.id,
+                "variant_id": job.variant_id,
+                "file_path": file_path.name,
+                "error_code": exc.code,
+                "retryable": exc.retryable,
+            },
+        )
         await handle_upload_error(
             settings=settings,
             session_factory=session_factory,
@@ -571,6 +586,7 @@ async def handle_upload_error(
             "attempts": attempts,
             "backoff": backoff,
             "error": error,
+            "retryable": True,
         },
     )
     await asyncio.sleep(backoff)
@@ -832,7 +848,7 @@ def move_file(
         try:
             shutil.move(str(source), str(destination))
             return
-        except PermissionError as exc:
+        except (PermissionError, FileNotFoundError) as exc:
             if attempt >= len(backoff_seconds):
                 logger.exception(
                     "failed to move file after retries",
@@ -887,8 +903,13 @@ def _resolve_telegram_base_url(settings: Settings) -> str:
 
 async def is_file_ready(file_path: Path) -> bool:
     try:
-        size_before = file_path.stat().st_size
+        stat_before = file_path.stat()
     except OSError:
+        return False
+    if not file_path.exists():
+        return False
+    age_seconds = time.time() - stat_before.st_mtime
+    if age_seconds < 1:
         return False
     try:
         with file_path.open("rb"):
@@ -897,10 +918,10 @@ async def is_file_ready(file_path: Path) -> bool:
         return False
     await asyncio.sleep(1)
     try:
-        size_after = file_path.stat().st_size
+        stat_after = file_path.stat()
     except OSError:
         return False
-    return size_before == size_after
+    return stat_before.st_size == stat_after.st_size and stat_before.st_mtime == stat_after.st_mtime
 
 
 if __name__ == "__main__":
