@@ -99,6 +99,11 @@ export const UserDataProvider = ({ children }: { children: React.ReactNode }) =>
     } catch (error) {
       setAuthToken(null);
       if (error instanceof ApiError) {
+        if (error.message === "API вернул ответ не в JSON.") {
+          setAuthError(error.message);
+          markAuthFailed();
+          throw error;
+        }
         const detail = error.data?.detail as string | undefined;
         const message =
           detail === "init_data_required"

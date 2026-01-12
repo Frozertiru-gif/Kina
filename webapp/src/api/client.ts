@@ -97,7 +97,23 @@ const apiFetch = async <T>(
   });
   config.onResponse?.(response);
 
+  const contentType = response.headers.get("content-type") ?? "";
+  const isJson = contentType.includes("application/json");
+  const buildNonJsonError = async () => {
+    const text = await response.text();
+    const snippet = text.slice(0, 200);
+    throw new ApiError("API вернул ответ не в JSON.", {
+      contentType,
+      status: response.status,
+      url: response.url,
+      snippet,
+    });
+  };
+
   if (response.status === 401 || response.status === 403) {
+    if (!isJson) {
+      await buildNonJsonError();
+    }
     const errorPayload = (await response.json().catch(() => null)) as
       | Record<string, unknown>
       | null;
@@ -109,6 +125,9 @@ const apiFetch = async <T>(
   }
 
   if (!response.ok) {
+    if (!isJson) {
+      await buildNonJsonError();
+    }
     const errorPayload = (await response.json().catch(() => null)) as
       | Record<string, unknown>
       | null;
@@ -120,6 +139,9 @@ const apiFetch = async <T>(
     return undefined as T;
   }
 
+  if (!isJson) {
+    await buildNonJsonError();
+  }
   return response.json() as Promise<T>;
 };
 
