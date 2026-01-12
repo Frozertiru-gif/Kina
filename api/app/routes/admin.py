@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import date, datetime, timezone
 
@@ -21,12 +20,10 @@ from app.models import (
     Subscription,
     Title,
     TitleType,
-    UploadJob,
     User,
     UserPremium,
     ViewEvent,
 )
-from app.redis import get_redis
 from app.services.audit import log_audit_event
 from app.services.premium import apply_premium_days
 
@@ -384,7 +381,6 @@ async def delete_title(
     await session.execute(delete(Favorite).where(Favorite.title_id == title_id))
     await session.execute(delete(Subscription).where(Subscription.title_id == title_id))
     variant_ids = select(MediaVariant.id).where(MediaVariant.title_id == title_id)
-    await session.execute(delete(UploadJob).where(UploadJob.variant_id.in_(variant_ids)))
     await session.execute(delete(MediaVariant).where(MediaVariant.title_id == title_id))
     await session.execute(delete(Episode).where(Episode.title_id == title_id))
     await session.execute(delete(Season).where(Season.title_id == title_id))
@@ -815,7 +811,6 @@ async def delete_variant(
     variant = await session.get(MediaVariant, variant_id)
     if not variant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="variant_not_found")
-    await session.execute(delete(UploadJob).where(UploadJob.variant_id == variant_id))
     await session.delete(variant)
     await _log_admin_event(
         session,
@@ -940,89 +935,6 @@ async def attach_variant_file(
         storage_message_id=variant.storage_message_id,
         storage_chat_id=variant.storage_chat_id,
     )
-
-
-@router.get("/upload_jobs")
-async def list_upload_jobs(
-    status: str | None = Query(default=None, max_length=50),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    _: dict = Depends(get_admin_token),
-    session: AsyncSession = Depends(get_db_session),
-) -> dict:
-    query = select(UploadJob)
-    if status:
-        query = query.where(UploadJob.status == status)
-    total_result = await session.execute(select(func.count()).select_from(query.subquery()))
-    total = total_result.scalar_one()
-    result = await session.execute(
-        query.order_by(UploadJob.id.desc()).limit(limit).offset(offset)
-    )
-    jobs = result.scalars().all()
-    return {
-        "items": [
-            {
-                "id": job.id,
-                "variant_id": job.variant_id,
-                "status": job.status,
-                "attempts": job.attempts,
-                "local_path": job.local_path,
-                "last_error": job.last_error,
-                "created_at": job.created_at,
-                "updated_at": job.updated_at,
-            }
-            for job in jobs
-        ],
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
-
-
-@router.post("/upload_jobs/{job_id}/retry")
-async def retry_upload_job(
-    job_id: int,
-    admin_info: dict = Depends(get_admin_token),
-    session: AsyncSession = Depends(get_db_session),
-) -> dict:
-    job = await session.get(UploadJob, job_id)
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job_not_found")
-    job.status = "queued"
-    job.last_error = None
-    job.attempts = 0
-    variant = await session.get(MediaVariant, job.variant_id)
-    if variant:
-        variant.status = "uploading"
-        variant.error = None
-    await _log_admin_event(
-        session,
-        admin_info,
-        action="upload_job_retry",
-        entity_type="upload_job",
-        entity_id=job.id,
-        metadata={"variant_id": job.variant_id},
-    )
-    await session.commit()
-    return {"job_id": job.id, "status": job.status}
-
-
-@router.post("/upload_jobs/rescan")
-async def rescan_upload_jobs(
-    admin_info: dict = Depends(get_admin_token),
-    session: AsyncSession = Depends(get_db_session),
-) -> dict:
-    redis = get_redis()
-    await redis.rpush("uploader_control_queue", json.dumps({"action": "rescan"}))
-    await _log_admin_event(
-        session,
-        admin_info,
-        action="upload_jobs_rescan",
-        entity_type="upload_job",
-        entity_id=None,
-    )
-    await session.commit()
-    return {"queued": True}
 
 
 @router.get("/users")

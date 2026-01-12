@@ -184,24 +184,6 @@ class MediaVariant(Base):
     )
 
 
-class UploadJob(Base):
-    __tablename__ = "upload_jobs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created_by_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
-    local_path: Mapped[str] = mapped_column(String(512), nullable=False)
-    variant_id: Mapped[int] = mapped_column(ForeignKey("media_variants.id"), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False)
-    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
-    last_error: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
-
-
 class Favorite(Base):
     __tablename__ = "favorites"
 

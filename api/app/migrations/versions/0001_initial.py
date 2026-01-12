@@ -185,19 +185,6 @@ def upgrade() -> None:
     )
 
     op.create_table(
-        "upload_jobs",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("created_by_admin_id", sa.Integer(), sa.ForeignKey("admins.id")),
-        sa.Column("local_path", sa.String(length=512), nullable=False),
-        sa.Column("variant_id", sa.Integer(), sa.ForeignKey("media_variants.id"), nullable=False),
-        sa.Column("status", sa.String(length=50), nullable=False),
-        sa.Column("attempts", sa.Integer(), server_default="0", nullable=False),
-        sa.Column("last_error", sa.Text()),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
-    )
-
-    op.create_table(
         "user_premium",
         sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
         sa.Column("premium_until", sa.DateTime(timezone=True), nullable=False),
@@ -254,7 +241,6 @@ def downgrade() -> None:
     op.drop_table("favorites")
     op.drop_table("user_state")
     op.drop_table("user_premium")
-    op.drop_table("upload_jobs")
     op.drop_table("referral_rewards")
     op.drop_table("referrals")
     op.drop_table("referral_codes")
