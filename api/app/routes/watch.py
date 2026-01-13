@@ -135,6 +135,17 @@ async def watch_resolve(
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> WatchResolveResponse:
+    logger.info(
+        "watch resolve request",
+        extra={
+            "action": "watch_resolve_request",
+            "user_id": user.id,
+            "title_id": payload.title_id,
+            "episode_id": payload.episode_id,
+            "audio_id": payload.audio_id,
+            "quality_id": payload.quality_id,
+        },
+    )
     try:
         result = await resolve_watch_variant(
             session,
