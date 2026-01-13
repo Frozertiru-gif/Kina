@@ -134,14 +134,14 @@ async def watch_resolve(
     payload: WatchResolveRequest,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
-    request: Request | None = None,
+    request: Request,
 ) -> WatchResolveResponse:
     logger.info(
         "watch resolve request",
         extra={
             "action": "watch_resolve_request",
             "source": "webapp",
-            "request_id": request.state.request_id if request else None,
+            "request_id": request.state.request_id,
             "user_id": user.id,
             "tg_user_id": user.tg_user_id,
             "title_id": payload.title_id,
