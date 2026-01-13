@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import (
     _ensure_not_banned,
+    _get_bot_token,
     _issue_access_token,
-    _parse_init_data,
     _validate_init_data,
     get_db_session,
 )
@@ -31,10 +31,6 @@ logger = logging.getLogger("kina.api")
 
 def _is_webapp_debug_enabled() -> bool:
     return os.getenv("AUTH_WEBAPP_DEBUG", "0") == "1"
-
-
-def _is_webapp_strict() -> bool:
-    return os.getenv("AUTH_WEBAPP_STRICT", "1") != "0"
 
 
 class WebAppAuthRequest(BaseModel):
@@ -131,25 +127,19 @@ async def auth_webapp(
                 extra={
                     "action": "auth_webapp_rejected",
                     "detail": detail,
-                    "rejection_reason": "parse error",
+                    "rejection_reason": "missing_init_data",
                     "status_code": status.HTTP_401_UNAUTHORIZED,
                 },
             )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail)
-    bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
+    bot_token = _get_bot_token()
     try:
-        parsed = (
-            _validate_init_data(init_data, bot_token, debug=True)
-            if _is_webapp_strict()
-            else _parse_init_data(init_data)
-        )
+        parsed = _validate_init_data(init_data, bot_token, debug=True)
     except HTTPException as exc:
         if _is_webapp_debug_enabled():
             if exc.detail == "init_data_expired":
                 rejection_reason = "expired"
-            elif exc.detail in {"bad_hash_format", "clock_skew", "init_data_invalid"}:
+            elif exc.detail in {"clock_skew", "init_data_invalid"}:
                 rejection_reason = "invalid hash"
             else:
                 rejection_reason = "parse error"
@@ -187,7 +177,6 @@ async def auth_webapp(
                 "action": "auth_webapp_parsed",
                 "parsed_keys": sorted(parsed.keys()),
                 "has_user": bool(raw_user),
-                "has_hash": "hash" in parsed,
                 "auth_date": parsed.get("auth_date"),
             },
         )
