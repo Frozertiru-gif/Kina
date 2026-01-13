@@ -3,7 +3,6 @@ import hmac
 import json
 import logging
 import os
-import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qsl, unquote
@@ -55,55 +54,43 @@ def _get_dev_user_id(dev_user_id: str | None) -> int:
     )
 
 
-def _parse_init_data(init_data: str, *, treat_plus_as_space: bool = True) -> dict[str, Any]:
-    if treat_plus_as_space:
-        return dict(parse_qsl(init_data, strict_parsing=False, keep_blank_values=True))
-    pairs: list[tuple[str, str]] = []
-    for chunk in init_data.split("&"):
-        if not chunk:
-            continue
-        key, _, value = chunk.partition("=")
-        pairs.append((unquote(key), unquote(value)))
-    return dict(pairs)
-
-
 def _is_webapp_debug_enabled() -> bool:
     return os.getenv("AUTH_WEBAPP_DEBUG", "0") == "1"
 
 
-def _normalize_init_data_candidates(init_data: str) -> list[str]:
+def _get_bot_token() -> str:
+    token = (
+        os.getenv("BOT_TOKEN")
+        or os.getenv("TELEGRAM_BOT_TOKEN")
+        or os.getenv("WEBAPP_BOT_TOKEN")
+    )
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="bot_token_missing",
+        )
+    return token
+
+
+def _extract_tg_webapp_data(init_data: str) -> str:
     normalized = init_data.strip()
     if normalized.startswith("?") or normalized.startswith("#"):
         normalized = normalized[1:]
-    if "tgWebAppData=" in normalized:
-        for part in normalized.split("&"):
-            if not part:
-                continue
-            key, _, value = part.partition("=")
-            if key == "tgWebAppData":
-                normalized = unquote(value)
-                break
-    candidates = [normalized]
-    if " " in normalized and "+" not in normalized:
-        candidates.append(normalized.replace(" ", "+"))
-    deduped: list[str] = []
-    for item in candidates:
-        if item not in deduped:
-            deduped.append(item)
-    return deduped
+    if "tgWebAppData=" not in normalized:
+        return normalized
+    for part in normalized.split("&"):
+        if not part:
+            continue
+        key, _, value = part.partition("=")
+        if key == "tgWebAppData":
+            return unquote(value)
+    return normalized
 
 
 def _validate_init_data(init_data: str, bot_token: str, *, debug: bool = False) -> dict[str, Any]:
-    variants: list[dict[str, Any]] = []
-    for candidate in _normalize_init_data_candidates(init_data):
-        variants.append(_parse_init_data(candidate))
-        variants.append(_parse_init_data(candidate, treat_plus_as_space=False))
-
     has_hash = False
-    bad_hash_format = False
     has_auth_date = False
     has_user = False
-    failure_reason = "hash_mismatch"
 
     def _log_failure(reason: str) -> None:
         if debug and _is_webapp_debug_enabled():
@@ -118,82 +105,88 @@ def _validate_init_data(init_data: str, bot_token: str, *, debug: bool = False) 
                     "has_user": has_user,
                 },
             )
-    for parsed in variants:
-        if parsed.get("auth_date"):
-            has_auth_date = True
-        if parsed.get("user"):
-            has_user = True
-        provided_hash = parsed.get("hash")
-        if provided_hash is None:
-            continue
-        has_hash = True
-        if not re.fullmatch(r"[0-9a-f]{64}", str(provided_hash)):
-            bad_hash_format = True
-            failure_reason = "bad_hash_format"
-            continue
-        data_check_string = "\n".join(
-            f"{key}={value}" for key, value in sorted(parsed.items()) if key != "hash"
-        )
-        secret = hashlib.sha256(bot_token.encode("utf-8")).digest()
-        calculated_hash = hmac.new(
-            secret, data_check_string.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
-        if not hmac.compare_digest(calculated_hash, provided_hash):
-            failure_reason = "hash_mismatch"
-            continue
-        auth_date_raw = parsed.get("auth_date")
-        if not auth_date_raw:
-            failure_reason = "auth_date_missing"
-            _log_failure(failure_reason)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="init_data_invalid",
-            )
-        try:
-            auth_date = int(auth_date_raw)
-        except (TypeError, ValueError) as exc:
-            failure_reason = "parse_error"
-            _log_failure(failure_reason)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="init_data_invalid",
-            ) from exc
-        now_ts = int(datetime.now(timezone.utc).timestamp())
-        max_age = int(os.getenv("AUTH_WEBAPP_MAX_AGE_SECONDS", "86400"))
-        clock_skew = int(os.getenv("AUTH_WEBAPP_CLOCK_SKEW_SECONDS", "120"))
-        if auth_date > now_ts + clock_skew:
-            failure_reason = "clock_skew"
-            _log_failure(failure_reason)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="clock_skew",
-            )
-        if now_ts - auth_date > max_age:
-            failure_reason = "expired"
-            _log_failure(failure_reason)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="init_data_expired",
-            )
-        return parsed
 
-    if bad_hash_format:
-        _log_failure("bad_hash_format")
+    normalized = _extract_tg_webapp_data(init_data)
+    try:
+        pairs = parse_qsl(normalized, strict_parsing=True, keep_blank_values=True)
+    except ValueError as exc:
+        _log_failure("parse_error")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="bad_hash_format",
-        )
-    if not has_hash:
+            detail="init_data_invalid",
+        ) from exc
+
+    data: dict[str, str] = {}
+    hash_from_tg: str | None = None
+    for key, value in pairs:
+        if key == "hash":
+            hash_from_tg = value
+            has_hash = True
+            continue
+        data[key] = value
+        if key == "auth_date":
+            has_auth_date = True
+        if key == "user":
+            has_user = True
+
+    if not hash_from_tg:
         _log_failure("missing_hash")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="init_data_invalid",
         )
-    _log_failure(failure_reason)
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="init_data_invalid",
-    )
+
+    data_check_string = "\n".join(f"{key}={data[key]}" for key in sorted(data))
+    secret_key = hmac.new(
+        b"WebAppData",
+        bot_token.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    calculated_hash = hmac.new(
+        secret_key,
+        data_check_string.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(calculated_hash, hash_from_tg):
+        _log_failure("hash_mismatch")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="init_data_invalid",
+        )
+
+    auth_date_raw = data.get("auth_date")
+    if not auth_date_raw:
+        _log_failure("missing_auth_date")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="init_data_invalid",
+        )
+    try:
+        auth_date = int(auth_date_raw)
+    except (TypeError, ValueError) as exc:
+        _log_failure("parse_error")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="init_data_invalid",
+        ) from exc
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    max_age = int(os.getenv("AUTH_WEBAPP_MAX_AGE_SECONDS", "86400"))
+    clock_skew = int(os.getenv("AUTH_WEBAPP_CLOCK_SKEW_SECONDS", "120"))
+    if auth_date > now_ts + clock_skew:
+        _log_failure("clock_skew")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="clock_skew",
+        )
+    if now_ts - auth_date > max_age:
+        _log_failure("expired")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="init_data_expired",
+        )
+
+    return data
 
 
 def _get_jwt_secret() -> str:
@@ -337,9 +330,7 @@ async def get_current_user(
 
     if not x_init_data:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token_missing")
-    bot_token = os.getenv("BOT_TOKEN")
-    if not bot_token:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="bot_token_missing")
+    bot_token = _get_bot_token()
     parsed = _validate_init_data(x_init_data, bot_token)
     raw_user = parsed.get("user")
     if not raw_user:
