@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -134,12 +134,16 @@ async def watch_resolve(
     payload: WatchResolveRequest,
     user: CurrentUser = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
+    request: Request | None = None,
 ) -> WatchResolveResponse:
     logger.info(
         "watch resolve request",
         extra={
             "action": "watch_resolve_request",
+            "source": "webapp",
+            "request_id": request.state.request_id if request else None,
             "user_id": user.id,
+            "tg_user_id": user.tg_user_id,
             "title_id": payload.title_id,
             "episode_id": payload.episode_id,
             "audio_id": payload.audio_id,

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AudioTrack, MediaVariant, Quality, UserState
+from app.models import MediaVariant, UserState
 
 logger = logging.getLogger("kina.api.watch_resolver")
 
@@ -57,6 +57,7 @@ async def resolve_watch_variant(
         base_filters.append(MediaVariant.episode_id == episode_id)
 
     variants = await _load_variants(session=session, base_filters=base_filters)
+    ready_variants = [item for item in variants if _variant_has_file(item)]
     _log_variant_diagnostics(
         user_id=user_id,
         title_id=title_id,
@@ -66,134 +67,132 @@ async def resolve_watch_variant(
         resolved_audio_id=resolved_audio_id,
         resolved_quality_id=resolved_quality_id,
         variants=variants,
+        ready_variants=ready_variants,
     )
 
-    if resolved_audio_id is None or resolved_quality_id is None:
-        best_variant = await _find_best_variant(
-            session=session,
-            variants=variants,
-            required_audio_id=requested_audio_id,
-            required_quality_id=requested_quality_id,
-            preferred_audio_id=resolved_audio_id,
-            preferred_quality_id=resolved_quality_id,
-        )
-        if best_variant is None:
-            raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
-        return ResolveResult(
-            variant_id=best_variant.id,
-            audio_id=best_variant.audio_id,
-            quality_id=best_variant.quality_id,
-        )
-
-    variant = await _find_variant_with_file(
-        variants=variants,
+    exact_variant = _find_exact_ready_variant(
+        ready_variants=ready_variants,
         audio_id=resolved_audio_id,
         quality_id=resolved_quality_id,
     )
-    if not variant:
-        fallback_variant = await _find_best_variant(
-            session=session,
-            variants=variants,
-            required_audio_id=None,
-            required_quality_id=None,
-            preferred_audio_id=resolved_audio_id,
-            preferred_quality_id=resolved_quality_id,
-        )
-        if fallback_variant is None:
-            raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
+    if exact_variant:
         logger.info(
-            "watch resolve fallback",
+            "watch resolve success",
             extra={
-                "action": "watch_resolve_fallback",
+                "action": "watch_resolve",
                 "user_id": user_id,
                 "title_id": title_id,
                 "episode_id": episode_id,
-                "requested_audio_id": resolved_audio_id,
-                "requested_quality_id": resolved_quality_id,
-                "variant_id": fallback_variant.id,
-                "variant_audio_id": fallback_variant.audio_id,
-                "variant_quality_id": fallback_variant.quality_id,
+                "variant_id": exact_variant.id,
+                "variant_audio_id": exact_variant.audio_id,
+                "variant_quality_id": exact_variant.quality_id,
+                "requested_audio_id": requested_audio_id,
+                "requested_quality_id": requested_quality_id,
+                "resolved_audio_id": resolved_audio_id,
+                "resolved_quality_id": resolved_quality_id,
+                "fallback": False,
             },
         )
         return ResolveResult(
-            variant_id=fallback_variant.id,
-            audio_id=fallback_variant.audio_id,
-            quality_id=fallback_variant.quality_id,
+            variant_id=exact_variant.id,
+            audio_id=exact_variant.audio_id,
+            quality_id=exact_variant.quality_id,
         )
 
+    fallback_variant = _select_fallback_variant(
+        ready_variants=ready_variants,
+        resolved_audio_id=resolved_audio_id,
+        resolved_quality_id=resolved_quality_id,
+    )
+    if fallback_variant is None:
+        raise ResolveVariantError(await _build_available_payload(session, title_id, episode_id))
+    logger.info(
+        "watch resolve fallback",
+        extra={
+            "action": "watch_resolve_fallback",
+            "user_id": user_id,
+            "title_id": title_id,
+            "episode_id": episode_id,
+            "requested_audio_id": requested_audio_id,
+            "requested_quality_id": requested_quality_id,
+            "resolved_audio_id": resolved_audio_id,
+            "resolved_quality_id": resolved_quality_id,
+            "variant_id": fallback_variant.id,
+            "variant_audio_id": fallback_variant.audio_id,
+            "variant_quality_id": fallback_variant.quality_id,
+            "fallback_reason": _fallback_reason(
+                resolved_audio_id=resolved_audio_id,
+                resolved_quality_id=resolved_quality_id,
+            ),
+        },
+    )
+    logger.info(
+        "watch resolve success",
+        extra={
+            "action": "watch_resolve",
+            "user_id": user_id,
+            "title_id": title_id,
+            "episode_id": episode_id,
+            "variant_id": fallback_variant.id,
+            "variant_audio_id": fallback_variant.audio_id,
+            "variant_quality_id": fallback_variant.quality_id,
+            "requested_audio_id": requested_audio_id,
+            "requested_quality_id": requested_quality_id,
+            "resolved_audio_id": resolved_audio_id,
+            "resolved_quality_id": resolved_quality_id,
+            "fallback": True,
+        },
+    )
     return ResolveResult(
-        variant_id=variant.id,
-        audio_id=resolved_audio_id,
-        quality_id=resolved_quality_id,
+        variant_id=fallback_variant.id,
+        audio_id=fallback_variant.audio_id,
+        quality_id=fallback_variant.quality_id,
     )
 
 
-def _find_variant_with_file(
+def _find_exact_ready_variant(
     *,
-    variants: list[MediaVariant],
-    audio_id: int,
-    quality_id: int,
+    ready_variants: list[MediaVariant],
+    audio_id: int | None,
+    quality_id: int | None,
 ) -> MediaVariant | None:
-    for variant in variants:
-        if (
-            variant.audio_id == audio_id
-            and variant.quality_id == quality_id
-            and _variant_has_file(variant)
-        ):
+    if audio_id is None or quality_id is None:
+        return None
+    for variant in ready_variants:
+        if variant.audio_id == audio_id and variant.quality_id == quality_id:
             return variant
     return None
 
 
-async def _find_best_variant(
+def _select_fallback_variant(
     *,
-    session: AsyncSession,
-    variants: list[MediaVariant],
-    required_audio_id: int | None,
-    required_quality_id: int | None,
-    preferred_audio_id: int | None,
-    preferred_quality_id: int | None,
+    ready_variants: list[MediaVariant],
+    resolved_audio_id: int | None,
+    resolved_quality_id: int | None,
 ) -> MediaVariant | None:
-    if not variants:
+    if not ready_variants:
         return None
-    order_clauses = []
-    if preferred_audio_id is not None:
-        order_clauses.append((MediaVariant.audio_id == preferred_audio_id).desc())
-    else:
-        order_clauses.append(AudioTrack.id.asc())
-    if preferred_quality_id is not None:
-        order_clauses.append((MediaVariant.quality_id == preferred_quality_id).desc())
-    order_clauses.append(Quality.height.desc())
-    order_clauses.append(MediaVariant.id.asc())
-    variant_query = (
-        select(MediaVariant)
-        .join(AudioTrack, AudioTrack.id == MediaVariant.audio_id)
-        .join(Quality, Quality.id == MediaVariant.quality_id)
-        .where(
-            MediaVariant.id.in_([variant.id for variant in variants]),
-            *(
-                [MediaVariant.audio_id == required_audio_id]
-                if required_audio_id is not None
-                else []
-            ),
-            *(
-                [MediaVariant.quality_id == required_quality_id]
-                if required_quality_id is not None
-                else []
-            ),
-            MediaVariant.telegram_file_id.is_not(None),
-            MediaVariant.telegram_file_id != "",
-            MediaVariant.storage_message_id.is_not(None),
-            AudioTrack.is_active.is_(True),
-            Quality.is_active.is_(True),
+
+    def _sort_key(variant: MediaVariant) -> tuple:
+        audio_match = resolved_audio_id is not None and variant.audio_id == resolved_audio_id
+        quality_match = resolved_quality_id is not None and variant.quality_id == resolved_quality_id
+        return (
+            0 if audio_match else 1,
+            0 if quality_match else 1,
+            variant.id,
         )
-        .order_by(*order_clauses)
-        .limit(1)
-    )
-    variant_result = await session.execute(variant_query)
-    variant = variant_result.scalar_one_or_none()
-    if variant:
-        return variant
-    return None
+
+    return sorted(ready_variants, key=_sort_key)[0]
+
+
+def _fallback_reason(*, resolved_audio_id: int | None, resolved_quality_id: int | None) -> str:
+    if resolved_audio_id is not None and resolved_quality_id is not None:
+        return "no_exact_match_prefer_audio_then_quality"
+    if resolved_audio_id is not None:
+        return "no_exact_match_prefer_audio"
+    if resolved_quality_id is not None:
+        return "no_exact_match_prefer_quality"
+    return "no_exact_match_pick_first"
 
 
 async def _build_available_payload(
@@ -208,15 +207,11 @@ async def _build_available_payload(
         availability_query = availability_query.where(MediaVariant.episode_id == episode_id)
     availability_result = await session.execute(availability_query)
     available_variants = availability_result.scalars().all()
-    ready_variants = [item for item in available_variants if item.status == "ready"]
-    ready_with_file = [
-        item
-        for item in available_variants
-        if item.status == "ready" and _variant_has_file(item)
+    variants_with_file_id = [item for item in available_variants if _variant_has_file_id(item)]
+    variants_with_storage_message_id = [
+        item for item in available_variants if _variant_has_storage_message(item)
     ]
-    variants_with_file = [
-        item for item in available_variants if _variant_has_file(item)
-    ]
+    ready_with_file = [item for item in available_variants if _variant_has_file(item)]
     audio_ids = sorted({item.audio_id for item in available_variants})
     quality_ids = sorted({item.quality_id for item in available_variants})
     variants_payload = [
@@ -224,6 +219,8 @@ async def _build_available_payload(
             "audio_id": item.audio_id,
             "quality_id": item.quality_id,
             "variant_id": item.id,
+            "has_file_id": _variant_has_file_id(item),
+            "has_storage_msg": _variant_has_storage_message(item),
         }
         for item in available_variants
     ]
@@ -231,9 +228,9 @@ async def _build_available_payload(
         error="no_ready_variant_with_file",
         counts={
             "total": len(available_variants),
-            "ready": len(ready_variants),
+            "with_file_id": len(variants_with_file_id),
+            "with_storage_message_id": len(variants_with_storage_message_id),
             "ready_with_file": len(ready_with_file),
-            "with_file": len(variants_with_file),
         },
         available_variants=variants_payload,
         available_audio_ids=audio_ids,
@@ -242,7 +239,15 @@ async def _build_available_payload(
 
 
 def _variant_has_file(variant: MediaVariant) -> bool:
-    return bool(variant.telegram_file_id) and variant.storage_message_id is not None
+    return _variant_has_file_id(variant) and _variant_has_storage_message(variant)
+
+
+def _variant_has_file_id(variant: MediaVariant) -> bool:
+    return bool(variant.telegram_file_id)
+
+
+def _variant_has_storage_message(variant: MediaVariant) -> bool:
+    return variant.storage_message_id is not None
 
 
 async def _load_variants(
@@ -265,6 +270,7 @@ def _log_variant_diagnostics(
     resolved_audio_id: int | None,
     resolved_quality_id: int | None,
     variants: list[MediaVariant],
+    ready_variants: list[MediaVariant],
 ) -> None:
     def _match_audio_quality(
         variant: MediaVariant, audio: int | None, quality: int | None
@@ -275,23 +281,24 @@ def _log_variant_diagnostics(
             return False
         return True
 
-    with_file = [item for item in variants if _variant_has_file(item)]
+    with_file_id = [item for item in variants if _variant_has_file_id(item)]
+    with_storage_message_id = [item for item in variants if _variant_has_storage_message(item)]
     match_requested = [
         item for item in variants if _match_audio_quality(item, requested_audio_id, requested_quality_id)
     ]
     match_resolved = [
         item for item in variants if _match_audio_quality(item, resolved_audio_id, resolved_quality_id)
     ]
-    match_resolved_with_file = [
-        item for item in match_resolved if _variant_has_file(item)
-    ]
+    match_resolved_with_file = [item for item in match_resolved if _variant_has_file(item)]
     candidates = [
         {
             "variant_id": item.id,
             "status": item.status,
             "audio_id": item.audio_id,
             "quality_id": item.quality_id,
-            "has_file": _variant_has_file(item),
+            "has_file_id": _variant_has_file_id(item),
+            "has_storage_msg": _variant_has_storage_message(item),
+            "ready_by_canonical": _variant_has_file(item),
         }
         for item in variants
     ]
@@ -308,11 +315,12 @@ def _log_variant_diagnostics(
             "resolved_quality_id": resolved_quality_id,
             "counts": {
                 "total": len(variants),
-                "with_file": len(with_file),
+                "with_file_id": len(with_file_id),
+                "with_storage_message_id": len(with_storage_message_id),
+                "ready_by_canonical": len(ready_variants),
                 "match_requested": len(match_requested),
                 "match_resolved": len(match_resolved),
                 "match_resolved_with_file": len(match_resolved_with_file),
-                "status_ready": len([item for item in variants if item.status == "ready"]),
             },
             "candidates": candidates,
         },
